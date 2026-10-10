@@ -8,6 +8,6 @@
 // MODO DEMONSTRAÇÃO: dados fictícios, nada é salvo.
 // ============================================================================
 window.HUB_CONFIG = {
-  SUPABASE_URL: "https://SEU-PROJETO.supabase.co",       // AJUSTE AQUI
-  SUPABASE_ANON_KEY: "sb_publishable_SUBSTITUA_PELA_SUA_CHAVE", // AJUSTE AQUI
+  SUPABASE_URL: "https://xwdhlfzpzvsrdwqzgdfr.supabase.co",
+  SUPABASE_ANON_KEY: "COLE_AQUI_A_PUBLISHABLE_KEY",
 };
