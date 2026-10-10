@@ -9,5 +9,5 @@
 // ============================================================================
 window.HUB_CONFIG = {
   SUPABASE_URL: "https://xwdhlfzpzvsrdwqzgdfr.supabase.co",
-  SUPABASE_ANON_KEY: "COLE_AQUI_A_PUBLISHABLE_KEY",
+  SUPABASE_ANON_KEY: "sb_publishable_aAbvRxQGxd9qlSQMKuV-3g_7Bz1cVtb",
 };
