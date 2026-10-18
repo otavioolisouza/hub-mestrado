@@ -199,9 +199,18 @@
   // --------------------------------------------------------------------------
   // Derivados (tudo calculado na hora)
   // --------------------------------------------------------------------------
+  const NOME_HUB = "Hub da Pós";
+  const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="16" width="26" height="5.5" rx="1.6" fill="var(--mark)"/><path d="M16 9.5C12.6 7.4 8.6 6.8 4.5 7.3v16.4c4.1-.5 8.1.1 11.5 2.2 3.4-2.1 7.4-2.7 11.5-2.2V7.3c-4.1-.5-8.1.1-11.5 2.2Z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/><path d="M16 9.5v16.4" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>';
+  const ehDoutorado = () => (S.profile || {}).nivel === "doutorado";
+  const TRAB = () => (ehDoutorado() ? "Tese" : "Dissertação");
+  const trab = () => (ehDoutorado() ? "tese" : "dissertação");
+  const nomeValido = (n) => !!n && !String(n).includes("@");
+  const primeiroNome = () => { const n = (S.profile || {}).full_name; return nomeValido(n) ? String(n).trim().split(/\s+/)[0] : ""; };
+  const creditosObtidos = () => S.disciplinas.filter((d) => d.ativa === false).reduce((a, d) => a + (Number(d.creditos) || 0), 0);
+  const creditosCursando = () => S.disciplinas.filter((d) => d.ativa !== false).reduce((a, d) => a + (Number(d.creditos) || 0), 0);
   const disc = (id) => achar("disciplinas", id);
   const discsAtivas = () => S.disciplinas.filter((d) => d.ativa !== false).sort((a, b) => String(a.nome).localeCompare(b.nome));
-  const destNome = (r) => r.para_dissertacao ? "Dissertação" : (disc(r.disciplina_id) || {}).nome || "";
+  const destNome = (r) => r.para_dissertacao ? TRAB() : (disc(r.disciplina_id) || {}).nome || "";
   const destCor = (r) => r.para_dissertacao ? "var(--primary)" : (disc(r.disciplina_id) || {}).cor || "var(--muted)";
   const destTag = (r) => destNome(r) ? '<span class="tag"><span class="dot" style="background:' + esc(destCor(r)) + '"></span>' + esc(destNome(r)) + "</span>" : "";
   const destValor = (r) => r.para_dissertacao ? "diss" : r.disciplina_id || "";
@@ -218,11 +227,16 @@
     return { w, m, p: m ? Math.round((w / m) * 100) : 0 };
   }
   const proximoMarco = () => S.marcos.filter((m) => !m.concluido && m.data && m.data >= HOJE()).sort((a, b) => a.data.localeCompare(b.data))[0];
+  // Ritmo de escrita: usa o próximo marco que exige o texto; se nenhum foi marcado assim, o próximo marco com data.
+  const proximaEntrega = () => {
+    const fut = S.marcos.filter((m) => !m.concluido && m.data && m.data >= HOJE()).sort((a, b) => a.data.localeCompare(b.data));
+    return fut.find((m) => m.entrega_texto) || (S.marcos.some((m) => m.entrega_texto) ? null : fut[0]);
+  };
 
   // --------------------------------------------------------------------------
   // Rotas
   // --------------------------------------------------------------------------
-  const NAV = [["inicio", "Início"], ["disciplinas", "Disciplinas"], ["leituras", "Leituras"], ["citacoes", "Citações"], ["tarefas", "Tarefas"], ["dissertacao", "Dissertação"], ["rotina", "Rotina"]];
+  const NAV = () => [["inicio", "Início"], ["disciplinas", "Disciplinas"], ["leituras", "Leituras"], ["citacoes", "Citações"], ["tarefas", "Tarefas"], ["dissertacao", TRAB()], ["rotina", "Rotina"]];
   function lerHash() {
     const h = decodeURIComponent((location.hash || "").replace(/^#/, ""));
     const [v, id] = h.split("/");
@@ -246,6 +260,7 @@
     else if (!S.carregado) html = '<div class="loading">Carregando seus dados…</div>';
     else html = casca((VIEWS[rota.v] || vInicio)());
     $("#root").innerHTML = html;
+    if (S.carregado && !DEMO && !nomeValido((S.profile || {}).full_name) && !$("#modal").innerHTML) abrirPerfil(true);
     if (aid) {
       const el = document.getElementById(aid);
       if (el && el !== document.activeElement) { el.focus(); try { if (sel != null && el.setSelectionRange) el.setSelectionRange(sel, sel); } catch (e) { /* campo sem cursor */ } }
@@ -253,7 +268,7 @@
   }
 
   function vLogin() {
-    const topo = '<span class="sig">§</span><div><h1>Hub do Mestrado</h1><p class="muted" style="margin-top:6px">Disciplinas, leituras, fichamentos e dissertação em um só lugar.</p></div>';
+    const topo = '<span class="login-logo">' + LOGO + '</span><div><h1>' + NOME_HUB + '</h1><p class="muted" style="margin-top:6px">Disciplinas, leituras, fichamentos, dissertação e tese em um só lugar.</p></div>';
     const erro = erroLogin ? '<p class="err">' + esc(erroLogin) + "</p>" : "";
     if (!loginEnviado) {
       return '<div class="login"><form class="login-card" data-form="login">' + topo +
@@ -270,18 +285,18 @@
 
   function casca(conteudo) {
     const email = S.sessao && S.sessao.user ? S.sessao.user.email : "";
-    const nome = (S.profile && S.profile.full_name) || email;
+    const nome = nomeValido((S.profile || {}).full_name) ? S.profile.full_name : email;
     const ini = String(nome || "?").trim().charAt(0).toUpperCase();
     const navAtual = { disciplina: "disciplinas", leitura: "leituras" }[rota.v] || rota.v;
     return (DEMO ? '<div class="demo-bar">Modo demonstração: dados fictícios, nada é salvo. Configure o Supabase (veja o GUIA.md) para usar de verdade.</div>' : "") +
       '<header class="topbar"><div class="topbar-in">' +
-      '<button class="brand" data-act="nav" data-v="inicio" aria-label="Início"><span class="sig">§</span><b>Mestrado</b></button>' +
-      '<nav class="nav" aria-label="Seções">' + NAV.map(([k, l]) => '<button data-act="nav" data-v="' + k + '"' + (navAtual === k ? ' aria-current="page"' : "") + ">" + l + "</button>").join("") + "</nav>" +
+      '<button class="brand" data-act="nav" data-v="inicio" aria-label="Início">' + LOGO + '<b>' + NOME_HUB + '</b></button>' +
+      '<nav class="nav" aria-label="Seções">' + NAV().map(([k, l]) => '<button data-act="nav" data-v="' + k + '"' + (navAtual === k ? ' aria-current="page"' : "") + ">" + l + "</button>").join("") + "</nav>" +
       '<div class="top-actions"><button class="btn primary" data-act="depositar">' + icon.up + '<span class="lbl">Depositar textos</span></button>' +
       '<button class="avatar" data-act="menu" aria-label="Menu da conta" aria-expanded="' + UI.menu + '">' + esc(ini) + "</button></div>" +
       (UI.menu ? '<div class="menu"><div class="who">' + esc(nome) + (email && email !== nome ? "<br>" + esc(email) : "") + "</div>" +
         (!ehStandalone() ? '<button data-act="instalar">Instalar como aplicativo</button>' : "") +
-        '<button data-act="editarMeta">Meta semanal de estudo</button>' +
+        '<button data-act="editarPerfil">Meu perfil</button>' +
         '<button data-act="sair">Sair</button></div>' : "") +
       "</div></header>" +
       '<main class="page">' + conteudo + "</main>";
@@ -307,7 +322,7 @@
     const hj = HOJE(), fim = N.somarDias(hj, 6);
     const h = new Date().getHours();
     const saud = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
-    const nome = ((S.profile && S.profile.full_name) || "").split(" ")[0];
+    const nome = primeiroNome();
     const wm = minutosSemana(), meta = metaSemana() * 60;
     const abertas = tarefasAbertas();
     const atrasT = abertas.filter((t) => t.prazo && t.prazo < hj);
@@ -316,6 +331,7 @@
     const pagRest = semanaL.reduce((a, l) => a + ritmo(l).restante, 0);
     const pagDia = semanaL.reduce((a, l) => a + (ritmo(l).porDia || 0), 0);
     const dp = progressoDiss(), pm = proximoMarco();
+    const nivelTxt = ehDoutorado() ? "Doutorado" : "Mestrado";
     const lendo = S.leituras.filter((l) => l.status === "Lendo");
 
     const itens = itensAgenda(hj, fim);
@@ -331,13 +347,13 @@
       atrasL.map((l) => '<div class="row clickable" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '"><div class="grow"><div class="t">' + esc(l.titulo) + '</div><div class="s">Leitura · ' + destTag(l) + "</div></div>" + prazoPill(l.prazo) + "</div>").join("") +
       atrasT.map(linhaTarefa).join("") + "</div></div>" : "";
 
-    return '<div class="head"><div><h1>' + saud + (nome ? ", " + esc(nome) : "") + '</h1><p class="sub">' + esc(new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })) + "</p></div>" +
+    return '<div class="head"><div><h1>' + saud + (nome ? ", " + esc(nome) : "") + '</h1><p class="sub">' + esc(new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })) + " · " + esc([nivelTxt, (S.profile || {}).programa].filter(Boolean).join(", ")) + "</p></div>" +
       '<div class="actions"><button class="btn" data-act="novo" data-t="tarefas">+ Tarefa</button><button class="btn" data-act="novo" data-t="sessoes">+ Sessão de estudo</button></div></div>' +
       '<div class="metrics">' +
         '<div class="metric"><span class="label">Estudo na semana</span><span class="big">' + fmtH(wm) + " <small>de " + metaSemana() + "h</small></span>" + bar(wm, meta, wm >= meta && meta ? "ok" : "") + "</div>" +
         '<div class="metric"><span class="label">Leitura dos próximos 7 dias</span><span class="big">' + num(pagRest) + ' <small>páginas</small></span><span class="small muted">' + (pagDia ? "cerca de <b>" + num(pagDia) + "</b> por dia para cumprir os prazos" : "nenhuma leitura com prazo") + "</span></div>" +
         '<div class="metric"><span class="label">Tarefas abertas</span><span class="big">' + abertas.length + '</span><span class="small" style="color:' + (atrasT.length ? "var(--danger)" : "var(--muted)") + '">' + (atrasT.length ? plural(atrasT.length, "atrasada", "atrasadas") : "nenhuma atrasada") + "</span></div>" +
-        '<div class="metric"><span class="label">Dissertação</span><span class="big">' + dp.p + "<small>%</small></span>" + bar(dp.w, dp.m) + '<span class="small muted">' + (pm ? esc(pm.titulo) + " " + rel(pm.data) : "sem marco futuro") + "</span></div>" +
+        '<div class="metric"><span class="label">' + TRAB() + '</span><span class="big">' + dp.p + "<small>%</small></span>" + bar(dp.w, dp.m) + '<span class="small muted">' + (pm ? esc(pm.titulo) + " " + rel(pm.data) : "sem marco futuro") + "</span></div>" +
       "</div>" +
       '<div class="cols"><div class="stack">' + atrasados +
         '<section class="panel"><div class="panel-h"><h2>Próximos 7 dias</h2><span class="xs muted">aulas calculadas pelo dia da semana de cada disciplina</span></div><div class="agenda">' + agenda + "</div></section></div>" +
@@ -362,15 +378,19 @@
       const tar = S.tarefas.filter((t) => t.disciplina_id === d.id && !t.concluida).length;
       return '<button class="dcard" style="--c:' + esc(d.cor || "var(--line)") + '" data-act="nav" data-v="disciplina" data-id="' + esc(d.id) + '">' +
         "<div><h3>" + esc(d.nome) + '</h3><div class="small muted">' + esc(d.professor || "") + "</div></div>" +
-        '<div class="meta">' + (d.dia_semana != null ? "<span>" + esc(DIAS[d.dia_semana]) + (d.hora_inicio ? ", " + hm(d.hora_inicio) + (d.hora_fim ? " às " + hm(d.hora_fim) : "") : "") + "</span>" : "<span>dia da aula não informado</span>") + (d.semestre ? '<span class="mono">' + esc(d.semestre) + "</span>" : "") + "</div>" +
+        '<div class="meta">' + (d.dia_semana != null ? "<span>" + esc(DIAS[d.dia_semana]) + (d.hora_inicio ? ", " + hm(d.hora_inicio) + (d.hora_fim ? " às " + hm(d.hora_fim) : "") : "") + "</span>" : "<span>dia da aula não informado</span>") + (d.semestre ? '<span class="mono">' + esc(d.semestre) + "</span>" : "") + (d.creditos ? "<span>" + plural(Number(d.creditos), "crédito", "créditos") + "</span>" : "") + (d.conceito ? "<span>conceito " + esc(d.conceito) + "</span>" : "") + "</div>" +
         (pa ? '<div class="kv"><span>Próxima aula</span><b>' + esc(fmtDia(pa)) + ' <span class="muted small">(' + rel(pa) + ")</span></b></div>" +
           '<div class="kv"><span>Para essa aula</span><span>' + (paraAula.length ? plural(paraAula.length, "texto", "textos") + " · " + pags + " p. restantes" : "nenhuma leitura pendente") + "</span></div>" : "") +
         '<div><div class="kv"><span>Leituras concluídas</span><span class="mono">' + feitas + "/" + ls.length + "</span></div>" + bar(feitas, ls.length, "ok") + "</div>" +
         '<div class="kv"><span>Tarefas abertas</span><span class="mono">' + tar + "</span></div></button>";
     };
-    return '<div class="head"><div><h1>Disciplinas</h1><p class="sub">Cada disciplina reúne próxima aula, textos, tarefas e materiais.</p></div><button class="btn primary" data-act="novo" data-t="disciplinas">+ Nova disciplina</button></div>' +
+    const exig = Number((S.profile || {}).creditos_necessarios) || 0, obt = creditosObtidos(), curs = creditosCursando();
+    const resumoCred = (exig || obt || curs) ? '<section class="panel" style="margin-bottom:18px"><div class="panel-h"><h2>Créditos</h2>' + (exig ? '<span class="mono small">' + obt + " de " + exig + " obtidos</span>" : '<button class="btn sm ghost" data-act="editarPerfil">Informar créditos exigidos</button>') + "</div>" +
+      (exig ? bar(obt, exig, obt >= exig ? "ok" : "") : "") + '<div class="kv" style="margin-top:10px"><span>Obtidos (disciplinas concluídas)</span><span class="mono">' + obt + '</span></div><div class="kv"><span>Em andamento</span><span class="mono">' + curs + "</span></div>" +
+      (exig ? '<div class="kv"><span>Faltam, contando as em andamento</span><span class="mono">' + Math.max(0, exig - obt - curs) + "</span></div>" : "") + "</section>" : "";
+    return '<div class="head"><div><h1>Disciplinas</h1><p class="sub">Cada disciplina reúne próxima aula, textos, tarefas e materiais.</p></div><button class="btn primary" data-act="novo" data-t="disciplinas">+ Nova disciplina</button></div>' + resumoCred +
       (ativas.length ? '<div class="cards">' + ativas.map(card).join("") + "</div>" : empty("Nenhuma disciplina cadastrada.", '<button class="btn" data-act="novo" data-t="disciplinas">+ Nova disciplina</button>')) +
-      (encerradas.length ? '<section style="margin-top:28px"><div class="panel-h"><h2>Encerradas</h2></div><div class="cards">' + encerradas.map(card).join("") + "</div></section>" : "");
+      (encerradas.length ? '<section style="margin-top:28px"><div class="panel-h"><h2>Concluídas</h2></div><div class="cards">' + encerradas.map(card).join("") + "</div></section>" : "");
   }
 
   function vDisciplina() {
@@ -468,7 +488,7 @@
             '<div class="stack" style="gap:8px;background:var(--surface-2);padding:12px;border-radius:8px"><div class="two" style="grid-template-columns:110px 1fr"><input type="text" id="cit-pag" placeholder="Página" aria-label="Página"><input type="text" id="cit-com" placeholder="Comentário (opcional)" aria-label="Comentário"></div>' +
             '<textarea id="cit-trecho" placeholder="Trecho exatamente como está no original" aria-label="Trecho" style="min-height:70px"></textarea><div><button class="btn sm primary" data-act="addCitacao" data-id="' + esc(l.id) + '">Adicionar citação</button></div></div></div>' +
           campo("critica", "Análise crítica", "Concordâncias, objeções, lacunas do argumento.") +
-          campo("conexao", "Conexão com a disciplina ou a dissertação", "Onde e como este texto será usado.") +
+          campo("conexao", "Conexão com a disciplina ou a " + trab(), "Onde e como este texto será usado.") +
         '<p class="hint">Os campos são salvos sozinhos quando você sai deles.</p></div></section>' +
       '</div><div class="stack">' +
         '<section class="panel"><div class="panel-h"><h2>Progresso</h2>' + statusPill(l.status) + "</div>" +
@@ -552,7 +572,7 @@
   function vDissertacao() {
     const d = S.dissertacao || {};
     const caps = S.capitulos.slice().sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-    const dp = progressoDiss(), pm = proximoMarco();
+    const dp = progressoDiss(), pm = proximaEntrega();
     const re = pm ? N.ritmoEscrita(dp.w, dp.m, pm.data, HOJE()) : null;
     const marcos = S.marcos.slice().sort((a, b) => String(a.data || "9999").localeCompare(String(b.data || "9999")));
     const reun = S.reunioes.slice().sort((a, b) => String(b.data).localeCompare(a.data));
@@ -560,12 +580,12 @@
     const mats = S.materiais.filter((m) => m.para_dissertacao);
     const capPill = (s) => '<span class="pill ' + ({ Rascunho: "warn", "Revisão": "primary", "Concluído": "ok" }[s] || "") + '">' + esc(s || "Planejado") + "</span>";
     const F = [["titulo", "Título"], ["orientador", "Orientação"], ["linha", "Linha de pesquisa"], ["problema", "Problema"], ["hipotese", "Hipótese"], ["objetivo_geral", "Objetivo geral"], ["objetivos_especificos", "Objetivos específicos"], ["metodologia", "Metodologia"]].filter(([k]) => d[k]);
-    return '<div class="head"><div><h1>Dissertação</h1><p class="sub">Projeto, capítulos, marcos, orientação e bibliografia.</p></div>' +
+    return '<div class="head"><div><h1>' + TRAB() + '</h1><p class="sub">Projeto, capítulos, marcos e requisitos, orientação e bibliografia.</p></div>' +
       '<div class="actions"><button class="btn" data-act="depositar" data-dest="diss">' + icon.up + 'Depositar textos</button><button class="btn primary" data-act="novo" data-t="capitulos">+ Capítulo</button></div></div>' +
       '<div class="metrics">' +
         '<div class="metric"><span class="label">Palavras escritas</span><span class="big">' + num(dp.w) + '</span><span class="small muted">meta de ' + num(dp.m) + "</span></div>" +
         '<div class="metric"><span class="label">Progresso do texto</span><span class="big">' + dp.p + "<small>%</small></span>" + bar(dp.w, dp.m) + "</div>" +
-        '<div class="metric"><span class="label">Ritmo necessário</span><span class="big">' + (re && re.porDia != null ? num(re.porDia) + " <small>palavras/dia</small>" : '<small>sem dados</small>') + '</span><span class="small muted">' + (pm ? "até " + esc(pm.titulo) + " (" + rel(pm.data) + ")" : "cadastre um marco com data") + "</span></div>" +
+        '<div class="metric"><span class="label">Ritmo necessário</span><span class="big">' + (re && re.porDia != null ? num(re.porDia) + " <small>palavras/dia</small>" : '<small>sem dados</small>') + '</span><span class="small muted">' + (pm ? "até " + esc(pm.titulo) + " (" + rel(pm.data) + ")" : "cadastre a data de entrega do texto") + "</span></div>" +
         '<div class="metric"><span class="label">Bibliografia</span><span class="big">' + bib.length + '</span><span class="small muted">' + bib.filter((l) => l.status === "Fichado").length + " fichadas</span></div>" +
       "</div>" +
       '<div class="cols"><div class="stack">' +
@@ -582,11 +602,11 @@
             (r.pauta ? '<div><b>Pauta:</b> <span style="white-space:pre-wrap">' + esc(r.pauta) + "</span></div>" : "") + (r.encaminhamentos ? '<div style="margin-top:4px"><b>Encaminhamentos:</b> <span style="white-space:pre-wrap">' + esc(r.encaminhamentos) + "</span></div>" : "") + "</div></div>").join("") + "</div>"
             : empty("Registre a pauta antes e os encaminhamentos depois de cada reunião.")) + "</section>" +
       '</div><div class="stack">' +
-        '<section class="panel"><div class="panel-h"><h2>Marcos</h2><button class="btn sm" data-act="novo" data-t="marcos">+ Marco</button></div>' +
-          (marcos.length ? '<div class="list">' + marcos.map((m) => '<div class="row' + (m.concluido ? " done" : "") + '"><input type="checkbox" data-marco="' + esc(m.id) + '"' + (m.concluido ? " checked" : "") + ' aria-label="Marco concluído"><div class="grow clickable" data-act="editar" data-t="marcos" data-id="' + esc(m.id) + '"><div class="t">' + esc(m.titulo) + '</div><div class="s">' + esc(fmtLongo(m.data)) + "</div></div>" +
-            (m.concluido ? '<span class="pill ok">feito</span>' : m.data ? (m.data >= HOJE() ? '<span class="pill mono">' + N.diasEntre(HOJE(), m.data) + " dias</span>" : '<span class="pill danger">vencido</span>') : "") + "</div>").join("") + "</div>" : empty("Depósito, defesa e outras datas do programa.")) + "</section>" +
-        '<section class="panel"><div class="panel-h"><h2>Bibliografia da pesquisa</h2></div>' + (bib.length ? '<div class="list">' + bib.slice(0, 12).map(linhaLeitura).join("") + "</div>" + (bib.length > 12 ? '<button class="btn sm ghost" style="margin-top:8px" data-act="verBibliografia">Ver todas (' + bib.length + ")</button>" : "") : empty("Deposite textos com destino Dissertação.")) + "</section>" +
-        '<section class="panel"><div class="panel-h"><h2>Arquivos</h2><button class="btn sm" data-act="enviarMaterial" data-dest="diss">' + icon.up + 'Enviar</button></div><p class="hint" style="margin-bottom:8px">Projeto, versões enviadas ao orientador, normas do programa.</p>' + listaMateriais(mats) + "</section>" +
+        '<section class="panel"><div class="panel-h"><h2>Marcos e requisitos</h2><div class="actions"><button class="btn sm ghost" data-act="sugerirRequisitos">Sugestões</button><button class="btn sm" data-act="novo" data-t="marcos">+ Item</button></div></div>' +
+          (marcos.length ? '<div class="list">' + marcos.map((m) => '<div class="row' + (m.concluido ? " done" : "") + '"><input type="checkbox" data-marco="' + esc(m.id) + '"' + (m.concluido ? " checked" : "") + ' aria-label="Marco concluído"><div class="grow clickable" data-act="editar" data-t="marcos" data-id="' + esc(m.id) + '"><div class="t">' + esc(m.titulo) + '</div><div class="s">' + (m.data ? "<span>" + esc(fmtLongo(m.data)) + "</span>" : "<span>sem data</span>") + (m.entrega_texto ? "<span>entrega do texto</span>" : "") + "</div></div>" +
+            (m.concluido ? '<span class="pill ok">feito</span>' : m.data ? (m.data >= HOJE() ? '<span class="pill mono">' + N.diasEntre(HOJE(), m.data) + " dias</span>" : '<span class="pill danger">vencido</span>') : "") + "</div>").join("") + "</div>" : empty("Créditos, proficiência, estágio de docência, depósito, defesa: o que o programa exige, com prazo.", '<button class="btn" data-act="sugerirRequisitos">Ver sugestões</button>')) + "</section>" +
+        '<section class="panel"><div class="panel-h"><h2>Bibliografia da pesquisa</h2></div>' + (bib.length ? '<div class="list">' + bib.slice(0, 12).map(linhaLeitura).join("") + "</div>" + (bib.length > 12 ? '<button class="btn sm ghost" style="margin-top:8px" data-act="verBibliografia">Ver todas (' + bib.length + ")</button>" : "") : empty("Deposite textos com destino " + TRAB() + ".")) + "</section>" +
+        '<section class="panel"><div class="panel-h"><h2>Arquivos</h2><button class="btn sm" data-act="enviarMaterial" data-dest="diss">' + icon.up + 'Enviar</button></div><p class="hint" style="margin-bottom:8px">Projeto, versões enviadas à orientação, regimento e normas do programa.</p>' + listaMateriais(mats) + "</section>" +
       "</div></div>";
   }
 
@@ -654,7 +674,7 @@
   const P = { fase: "foco", resta: duracao("foco"), rodando: false, fim: 0, feitos: 0, aviso: "" };
   const mmss = (seg) => N.pad(Math.floor(seg / 60)) + ":" + N.pad(seg % 60);
   const proximaPausa = () => ((P.feitos + 1) % Math.max(1, PC.ciclos) === 0 ? "longa" : "curta");
-  function mudarFase(f) { P.fase = f; P.resta = duracao(f); document.title = "Hub do Mestrado"; }
+  function mudarFase(f) { P.fase = f; P.resta = duracao(f); document.title = NOME_HUB; }
 
   let audio = null, bips = [];
   function prepararAudio() {
@@ -779,10 +799,11 @@
       [["professor", "Professor(a)", "text"], ["semestre", "Semestre", "text", { ph: "2026.2" }]],
       [["dia_semana", "Dia da aula", "select", { opts: DIAS_OPC }], ["hora_inicio", "Início", "time"], ["hora_fim", "Fim", "time"]],
       [["inicio_aulas", "Primeira aula", "date"], ["fim_aulas", "Última aula", "date"]],
+      [["creditos", "Créditos", "number"], ["conceito", "Conceito ou nota final", "text", { ph: "A, B, 9,5…" }]],
       ["cor", "Cor", "cor"],
       ["avaliacao", "Forma de avaliação", "textarea", { ph: "Ex.: seminário (40%) e artigo final (60%)" }],
       ["notas", "Anotações", "textarea"],
-      ["ativa", "Disciplina em andamento", "check", { def: true }]] },
+      ["ativa", "Em andamento (desmarque ao concluir: os créditos passam a contar como obtidos)", "check", { def: true }]] },
     leituras: { n: "leitura", g: "a", campos: [
       ["titulo", "Título", "text", { req: 1 }],
       ["autores", "Autores", "text", { ph: "SOBRENOME, Nome; SOBRENOME, Nome" }],
@@ -808,8 +829,9 @@
       [["palavras", "Palavras escritas", "number"], ["meta_palavras", "Meta de palavras", "number"]],
       ["notas", "Roteiro e pendências", "textarea"]] },
     marcos: { n: "marco", g: "o", campos: [
-      ["titulo", "Marco", "text", { req: 1, ph: "Depósito, defesa…" }],
-      ["data", "Data", "date"],
+      ["titulo", "Marco ou requisito", "text", { req: 1, ph: "Depósito, defesa, proficiência…" }],
+      ["data", "Data ou prazo", "date"],
+      ["entrega_texto", "Exige entregar o texto (usado no ritmo de escrita)", "check"],
       ["concluido", "Concluído", "check"]] },
     reunioes: { n: "reunião de orientação", g: "a", campos: [
       ["data", "Data", "date", { req: 1 }],
@@ -825,7 +847,7 @@
   };
 
   function opcoesDestino(sel) {
-    return '<option value="diss"' + (sel === "diss" ? " selected" : "") + ">Dissertação</option>" +
+    return '<option value="diss"' + (sel === "diss" ? " selected" : "") + ">" + TRAB() + "</option>" +
       discsAtivas().map((d) => '<option value="' + esc(d.id) + '"' + (sel === d.id ? " selected" : "") + ">" + esc(d.nome) + "</option>").join("");
   }
   function campoHTML(k, rot, tipo, o, v) {
@@ -900,15 +922,72 @@
     });
   }
 
-  function abrirFormMeta() {
-    UI.menu = false; render();
-    abrirModal('<form class="form" id="form-modal"><h2>Meta semanal de estudo</h2>' + campoHTML("meta", "Horas de estudo por semana", "number", { req: 1 }, metaSemana()) +
-      '<p class="hint">Conta todas as sessões registradas, pelo cronômetro ou à mão.</p><div class="actions"><span class="sp"></span><button type="button" class="btn ghost" data-act="fecharModal">Cancelar</button><button class="btn primary">Salvar</button></div></form>');
-    $("#form-modal").addEventListener("submit", async (e) => {
-      e.preventDefault(); const v = Number($("#fm-meta").value) || 0; fecharModal();
-      try { S.profile = await api.salvarPerfil({ meta_horas_semana: v }); render(); toast("Meta atualizada."); } catch (err) { falha(err); }
+  // Perfil: nome (para a saudação), nível, programa, créditos exigidos e meta.
+  // No primeiro acesso abre sozinho, porque o login por e-mail não traz o nome.
+  function abrirPerfil(obrigatorio) {
+    const p = S.profile || {};
+    const nome = nomeValido(p.full_name) ? p.full_name : "";
+    abrirModal('<form class="form" id="' + (obrigatorio ? "form-perfil-obrig" : "form-perfil") + '">' +
+      (obrigatorio ? '<div><h2>Boas-vindas ao ' + NOME_HUB + '</h2><p class="muted small" style="margin-top:4px">Duas informações para começar. Dá para mudar depois em Meu perfil.</p></div>' : "<h2>Meu perfil</h2>") +
+      campoHTML("pf-nome", "Como quer ser chamado(a)", "text", { req: 1, ph: "Seu nome" }, nome) +
+      '<div class="two">' + campoHTML("pf-nivel", "Curso", "select", { opts: [["mestrado", "Mestrado"], ["doutorado", "Doutorado"]] }, p.nivel || "mestrado") +
+      campoHTML("pf-programa", "Programa e instituição", "text", { ph: "PPGD/UFPR" }, p.programa || "") + "</div>" +
+      (obrigatorio ? "" : '<div class="two">' + campoHTML("pf-creditos", "Créditos exigidos pelo programa", "number", {}, p.creditos_necessarios) +
+        campoHTML("pf-meta", "Meta de horas de estudo por semana", "number", { req: 1 }, metaSemana()) + "</div>" +
+        '<p class="hint">O curso muda os nomes no hub (Dissertação ou Tese) e as sugestões de requisitos. Os créditos exigidos estão no regimento do seu programa.</p>') +
+      '<div class="actions"><span class="sp"></span>' + (obrigatorio ? "" : '<button type="button" class="btn ghost" data-act="fecharModal">Cancelar</button>') + '<button class="btn primary">' + (obrigatorio ? "Começar" : "Salvar") + "</button></div></form>");
+    const f = $(obrigatorio ? "#form-perfil-obrig" : "#form-perfil");
+    f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const patch = {
+        full_name: $("#fm-pf-nome").value.trim() || null,
+        nivel: $("#fm-pf-nivel").value,
+        programa: $("#fm-pf-programa").value.trim() || null,
+      };
+      if (!obrigatorio) {
+        const c = $("#fm-pf-creditos").value;
+        patch.creditos_necessarios = c === "" ? null : Math.max(0, Math.round(Number(c)));
+        patch.meta_horas_semana = Math.max(0, Number($("#fm-pf-meta").value) || 0);
+      }
+      if (!nomeValido(patch.full_name)) { toast("Escreva seu nome, sem o e-mail."); return; }
+      try {
+        S.profile = Object.assign({}, S.profile, await api.salvarPerfil(patch));
+        fecharModal(); render(); toast(obrigatorio ? "Tudo pronto, " + primeiroNome() + "." : "Perfil atualizado.");
+      } catch (err) { falha(err); }
     });
   }
+
+  // Sugestões de marcos e requisitos. Nada vem marcado: cada programa tem
+  // regras próprias, e a pessoa escolhe o que vale para o seu.
+  function abrirSugestoes() {
+    const doc = ehDoutorado();
+    const lista = [
+      ["Créditos em disciplinas", false],
+      [doc ? "Proficiência em língua estrangeira (1ª língua)" : "Proficiência em língua estrangeira", false],
+    ].concat(doc ? [["Proficiência em língua estrangeira (2ª língua)", false]] : []).concat([
+      ["Estágio de docência", false],
+      ["Exame de qualificação", true],
+    ]).concat(doc ? [["Publicação de artigo", false]] : []).concat([
+      ["Depósito da " + trab(), true],
+      ["Defesa da " + trab(), false],
+    ]);
+    const ja = new Set(S.marcos.map((m) => String(m.titulo).toLowerCase()));
+    abrirModal('<form class="form" id="form-sugestoes"><div><h2>Marcos e requisitos comuns no ' + (doc ? "doutorado" : "mestrado") + '</h2><p class="muted small" style="margin-top:4px">Marque só o que o seu programa exige. As regras variam de programa para programa: confira no regimento. Depois, abra cada item para colocar o prazo.</p></div>' +
+      '<div class="list">' + lista.map(([t, ent], i) => {
+        const tem = ja.has(t.toLowerCase());
+        return '<label class="row" style="cursor:pointer"><input type="checkbox" id="sg-' + i + '" data-titulo="' + esc(t) + '" data-entrega="' + (ent ? 1 : 0) + '"' + (tem ? " disabled" : "") + '><span class="grow">' + esc(t) + (tem ? ' <span class="pill">já cadastrado</span>' : "") + "</span></label>";
+      }).join("") + "</div>" +
+      '<div class="actions"><span class="sp"></span><button type="button" class="btn ghost" data-act="fecharModal">Cancelar</button><button class="btn primary">Adicionar marcados</button></div></form>');
+    $("#form-sugestoes").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const marcados = $$("#form-sugestoes input[type=checkbox]:checked");
+      if (!marcados.length) { fecharModal(); return; }
+      fecharModal();
+      for (const cb of marcados) await criar("marcos", { titulo: cb.dataset.titulo, data: null, concluido: false, entrega_texto: cb.dataset.entrega === "1" });
+      toast(plural(marcados.length, "item adicionado", "itens adicionados") + ". Abra cada um para colocar o prazo.", 6000);
+    });
+  }
+
 
   // --------------------------------------------------------------------------
   // Depósito de textos: analisa, busca dados, envia e cadastra sozinho
@@ -1107,9 +1186,11 @@
     },
     editar: (el) => abrirForm(el.dataset.t, el.dataset.id),
     editarDiss: () => abrirFormDiss(),
-    editarMeta: () => abrirFormMeta(),
+    editarMeta: () => abrirPerfil(false),
+    editarPerfil: () => { UI.menu = false; render(); abrirPerfil(false); },
+    sugerirRequisitos: () => abrirSugestoes(),
     fecharModal: () => fecharModal(),
-    fundoModal: (el, e) => { if (e.target === el && !$("#deposito")) fecharModal(); },
+    fundoModal: (el, e) => { if (e.target === el && !$("#deposito") && !$("#form-perfil-obrig")) fecharModal(); },
     excluirPedido: (el) => { el.textContent = "Confirmar exclusão"; el.dataset.act = "excluirModal"; },
     excluirModal: async (el) => { fecharModal(); const t = el.dataset.t, id = el.dataset.id; await excluir(t, id); if (t === "leituras" && rota.v === "leitura") ir("leituras"); if (t === "disciplinas" && rota.v === "disciplina") ir("disciplinas"); },
     pedirConfirmacao: (el) => { UI.confirmar = el.dataset.id; render(); },
@@ -1155,9 +1236,9 @@
       } catch (e) { toast(String(e.message || e).includes("fetch") ? "Não foi possível consultar o serviço agora. Tente mais tarde ou preencha à mão." : e.message, 6000); el.disabled = false; el.textContent = "Buscar"; }
     },
     pomoIniciar: () => iniciarFase(),
-    pomoPausar: () => { P.rodando = false; cancelarBips(); document.title = "Hub do Mestrado"; render(); },
+    pomoPausar: () => { P.rodando = false; cancelarBips(); document.title = NOME_HUB; render(); },
     pomoPular: () => { P.rodando = false; cancelarBips(); P.aviso = ""; mudarFase(P.fase === "foco" ? proximaPausa() : "foco"); render(); },
-    pomoZerar: () => { P.rodando = false; cancelarBips(); P.aviso = ""; P.resta = duracao(P.fase); document.title = "Hub do Mestrado"; render(); },
+    pomoZerar: () => { P.rodando = false; cancelarBips(); P.aviso = ""; P.resta = duracao(P.fase); document.title = NOME_HUB; render(); },
     pomoRegistrar: () => registrarParcial(),
     pomoFase: (el) => { if (P.rodando) return; P.aviso = ""; mudarFase(el.dataset.v); render(); },
     pomoAjustar: () => abrirAjustesPomodoro(),
@@ -1261,7 +1342,7 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && $("#modal").innerHTML) fecharModal();
+    if (e.key === "Escape" && $("#modal").innerHTML && !$("#form-perfil-obrig")) fecharModal();
     if (e.key === "Escape" && UI.menu) { UI.menu = false; render(); }
   });
 
@@ -1282,10 +1363,11 @@
     const d1 = uuid(), d2 = uuid(), d3 = uuid();
     const dow = (n) => (N.diaSemana(H) + n) % 7;
     const disciplinas = [
-      { id: d1, nome: "Teoria do Direito (exemplo)", professor: "Prof.ª Exemplo A", semestre: "2026.2", dia_semana: dow(3), hora_inicio: "14:00:00", hora_fim: "17:00:00", inicio_aulas: D(-50), fim_aulas: D(60), cor: PALETA[0], avaliacao: "Seminário (40%) e artigo final (60%)", notas: "Textos lidos na língua original.", ativa: true },
-      { id: d2, nome: "Contratos e Confiança (exemplo)", professor: "Prof. Exemplo B", semestre: "2026.2", dia_semana: dow(1), hora_inicio: "19:00:00", hora_fim: "22:00:00", inicio_aulas: D(-50), fim_aulas: D(60), cor: PALETA[1], avaliacao: "Guias de leitura e seminário", notas: "", ativa: true },
-      { id: d3, nome: "Metodologia da Pesquisa (exemplo)", professor: "Prof.ª Exemplo C", semestre: "2026.2", dia_semana: dow(5), hora_inicio: "08:00:00", hora_fim: "11:00:00", inicio_aulas: D(-50), fim_aulas: D(30), cor: PALETA[2], avaliacao: "Projeto revisado", notas: "", ativa: true },
+      { id: d1, nome: "Teoria do Direito (exemplo)", professor: "Prof.ª Exemplo A", semestre: "2026.2", dia_semana: dow(3), hora_inicio: "14:00:00", hora_fim: "17:00:00", inicio_aulas: D(-50), fim_aulas: D(60), cor: PALETA[0], avaliacao: "Seminário (40%) e artigo final (60%)", notas: "Textos lidos na língua original.", ativa: true, creditos: 4 },
+      { id: d2, nome: "Contratos e Confiança (exemplo)", professor: "Prof. Exemplo B", semestre: "2026.2", dia_semana: dow(1), hora_inicio: "19:00:00", hora_fim: "22:00:00", inicio_aulas: D(-50), fim_aulas: D(60), cor: PALETA[1], avaliacao: "Guias de leitura e seminário", notas: "", ativa: true, creditos: 4 },
+      { id: d3, nome: "Metodologia da Pesquisa (exemplo)", professor: "Prof.ª Exemplo C", semestre: "2026.2", dia_semana: dow(5), hora_inicio: "08:00:00", hora_fim: "11:00:00", inicio_aulas: D(-50), fim_aulas: D(30), cor: PALETA[2], avaliacao: "Projeto revisado", notas: "", ativa: true, creditos: 4 },
     ];
+    disciplinas.push({ id: uuid(), nome: "Seminário de Pesquisa (exemplo)", professor: "Prof. Exemplo D", semestre: "2026.1", dia_semana: null, cor: PALETA[3], ativa: false, creditos: 2, conceito: "A" });
     const L = (o) => Object.assign({ id: uuid(), created_at: new Date().toISOString(), para_dissertacao: false, status: "A ler", paginas_lidas: 0, referencia_conferida: false }, o);
     const l1 = L({ titulo: "Texto de exemplo sobre confiança contratual", autores: "AUTORA, Exemplo", ano: 2021, tipo_obra: "Artigo", disciplina_id: d2, prazo: N.proximaAula(disciplinas[1], H), paginas_total: 34, paginas_lidas: 12, status: "Lendo", referencia: "AUTORA, Exemplo. Texto de exemplo sobre confiança contratual. **Revista de Exemplo**, [S. l.], v. 1, n. 2, p. 10-43, 2021.", doi: "10.0000/exemplo.1" });
     const l2 = L({ titulo: "Livro de exemplo de teoria do direito", autores: "AUTOR, Exemplo", ano: 2019, tipo_obra: "Livro", idioma: "inglês", disciplina_id: d1, prazo: N.proximaAula(disciplinas[0], H), paginas_total: 60, paginas_lidas: 0, referencia: "AUTOR, Exemplo. **Livro de exemplo de teoria do direito**. Cidade: Editora Exemplo, 2019.", referencia_conferida: true });
@@ -1307,14 +1389,14 @@
     ];
     const capitulos = [[1, "Introdução", "Rascunho", 1800, 3000], [2, "Primeiro capítulo de exemplo", "Revisão", 9200, 12000], [3, "Segundo capítulo de exemplo", "Rascunho", 4100, 12000], [4, "Terceiro capítulo de exemplo", "Planejado", 0, 12000], [5, "Conclusão", "Planejado", 0, 2500]]
       .map(([ordem, titulo, status, palavras, meta]) => ({ id: uuid(), ordem, titulo, status, palavras, meta_palavras: meta, created_at: new Date().toISOString() }));
-    const marcos = [["Projeto revisado entregue", -20, true], ["Depósito", 200, false], ["Defesa", 240, false]].map(([titulo, d, c]) => ({ id: uuid(), titulo, data: D(d), concluido: c }));
+    const marcos = [["Projeto revisado entregue", -20, true, false], ["Proficiência em língua estrangeira", 40, false, false], ["Depósito", 200, false, true], ["Defesa", 240, false, false]].map(([titulo, d, c, e]) => ({ id: uuid(), titulo, data: D(d), concluido: c, entrega_texto: e }));
     const reunioes = [{ id: uuid(), data: D(-12), pauta: "Recorte do problema e bibliografia do capítulo 1.", encaminhamentos: "Reduzir o recorte temporal. Enviar resumo do capítulo 1.", created_at: new Date().toISOString() }];
     const blocos = [[0, "08:00", "10:00", "Leitura para a dissertação", "diss"], [2, "19:00", "21:00", "Fichamentos", d1], [3, "08:00", "10:00", "Escrita da dissertação", "diss"], [5, "09:00", "12:00", "Escrita da dissertação", "diss"]]
       .map(([dia, i, f, a, dest]) => ({ id: uuid(), dia_semana: dia, inicio: i + ":00", fim: f + ":00", atividade: a, disciplina_id: dest === "diss" ? null : dest, para_dissertacao: dest === "diss", created_at: new Date().toISOString() }));
     const sessoes = [[0, 50, d2], [-1, 90, "diss"], [-2, 50, d1], [-3, 120, "diss"], [-4, 60, d3], [-6, 75, d2], [-8, 100, "diss"], [-9, 50, d1], [-10, 120, "diss"], [-12, 60, d3], [-13, 45, d2], [-15, 110, "diss"], [-16, 50, d1], [-18, 90, "diss"], [-20, 60, d3], [-23, 80, "diss"], [-26, 70, d1], [-30, 100, "diss"], [-34, 60, d2], [-38, 90, "diss"], [-44, 75, d1], [-48, 60, "diss"], [-52, 45, d2]]
       .map(([d, m, dest]) => ({ id: uuid(), data: D(d), minutos: m, disciplina_id: dest === "diss" ? null : dest, para_dissertacao: dest === "diss", created_at: new Date().toISOString() }));
     return {
-      profile: { full_name: "", meta_horas_semana: 15 },
+      profile: { full_name: "Pessoa de Exemplo", nivel: "mestrado", programa: "Programa de exemplo", creditos_necessarios: 24, meta_horas_semana: 15 },
       dissertacao: { titulo: "Tema de exemplo da dissertação", orientador: "Prof. Dr. Exemplo", linha: "Linha de pesquisa de exemplo", problema: "Pergunta de pesquisa de exemplo.", hipotese: "Hipótese de exemplo.", objetivo_geral: "Objetivo geral de exemplo.", objetivos_especificos: "1. Objetivo específico de exemplo\n2. Objetivo específico de exemplo", metodologia: "Metodologia de exemplo." },
       disciplinas, leituras: [l1, l2, l3, l4, l5], citacoes, tarefas, materiais: [], capitulos, marcos, reunioes, blocos, sessoes,
     };

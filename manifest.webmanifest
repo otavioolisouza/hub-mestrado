@@ -1,7 +1,7 @@
 {
-  "name": "Hub do Mestrado",
-  "short_name": "Mestrado",
-  "description": "Disciplinas, leituras, fichamentos e dissertação em um só lugar.",
+  "name": "Hub da Pós",
+  "short_name": "Pós",
+  "description": "Disciplinas, leituras, fichamentos, dissertação e tese em um só lugar.",
   "lang": "pt-BR",
   "start_url": "./",
   "scope": "./",
