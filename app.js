@@ -157,11 +157,12 @@
   TABELAS.forEach((t) => (S[t] = []));
   const UI = {
     leitStatus: "abertas", leitDest: "", leitQ: "",
-    citQ: "", citDest: "", ideiaQ: "", ideiasAba: "ideias",
+    citQ: "", citDest: "", ideiaQ: "", fichAba: "textos", fichStatus: "pendentes", fichQ: "", pdfOculto: false,
     tarFiltro: "abertas", tarDest: "",
     menu: false, confirmar: null, salvoCampo: null,
   };
   let rota = { v: "inicio", id: null };
+  try { UI.pdfOculto = localStorage.getItem("hub-pdf-oculto") === "1"; } catch (e) { /* sem armazenamento */ }
   let erroLogin = "", loginEmail = "", loginEnviado = false, loginOcupado = false;
   let instalar = null;
 
@@ -239,7 +240,7 @@
   // --------------------------------------------------------------------------
   // Rotas
   // --------------------------------------------------------------------------
-  const NAV = () => [["inicio", "Início"], ["disciplinas", "Disciplinas"], ["leituras", "Leituras"], ["ideias", "Ideias"], ["tarefas", "Tarefas"], ["dissertacao", TRAB()], ["rotina", "Rotina"]];
+  const NAV = () => [["inicio", "Início"], ["disciplinas", "Disciplinas"], ["leituras", "Leituras"], ["fichamentos", "Fichamentos"], ["tarefas", "Tarefas"], ["dissertacao", TRAB()], ["rotina", "Rotina"]];
   function lerHash() {
     const h = decodeURIComponent((location.hash || "").replace(/^#/, ""));
     const [v, id] = h.split("/");
@@ -263,6 +264,8 @@
     else if (!S.carregado) html = '<div class="loading">Carregando seus dados…</div>';
     else html = casca((VIEWS[rota.v] || vInicio)());
     $("#root").innerHTML = html;
+    if (document.body && document.body.classList) document.body.classList.toggle("modo-ficha", S.carregado && rota.v === "fichamento");
+    atualizarPDF();
     if (S.carregado && !DEMO && !nomeValido((S.profile || {}).full_name) && !$("#modal").innerHTML) abrirPerfil(true);
     if (aid) {
       const el = document.getElementById(aid);
@@ -290,7 +293,7 @@
     const email = S.sessao && S.sessao.user ? S.sessao.user.email : "";
     const nome = nomeValido((S.profile || {}).full_name) ? S.profile.full_name : email;
     const ini = String(nome || "?").trim().charAt(0).toUpperCase();
-    const navAtual = { disciplina: "disciplinas", leitura: "leituras", citacoes: "ideias" }[rota.v] || rota.v;
+    const navAtual = { disciplina: "disciplinas", leitura: "leituras", fichamento: "fichamentos", citacoes: "fichamentos", ideias: "fichamentos" }[rota.v] || rota.v;
     return (DEMO ? '<div class="demo-bar">Modo demonstração: dados fictícios, nada é salvo. Configure o Supabase (veja o GUIA.md) para usar de verdade.</div>' : "") +
       '<header class="topbar"><div class="topbar-in">' +
       '<button class="brand" data-act="nav" data-v="inicio" aria-label="Início">' + LOGO + '<b>' + NOME_HUB + '</b></button>' +
@@ -512,7 +515,7 @@
     const pagHTML = pg ? '<span class="mono">p. ' + esc(pg) + "</span>" : '<span style="color:var(--warn)">sem página</span>';
     return '<div class="quote' + (opts.compacta ? " compacta" : "") + '"><div class="q">' + (c.trecho ? "“" + esc(c.trecho) + "”" : '<span class="muted">(grifo sem texto: o PDF pode ser imagem escaneada. Clique em Editar e digite o trecho.)</span>') + "</div>" +
       (c.traducao ? '<div class="small" style="font-style:italic">Tradução: ' + esc(c.traducao) + "</div>" : "") +
-      '<div class="m">' + (opts.obra ? '<span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" : "") +
+      '<div class="m">' + (opts.obra ? '<span class="clickable" data-act="nav" data-v="fichamento" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" : "") +
         pagHTML + (c.origem === "grifo" ? '<span class="pill mark" title="Importada dos grifos do PDF">grifo</span>' : "") +
         (aConferir ? '<span class="pill warn">conferir página</span><button class="btn sm ghost" data-act="conferirPagina" data-id="' + esc(c.id) + '" title="A página está certa">Página ok</button>' : "") +
         (opts.obra ? destTag(l) : "") +
@@ -530,21 +533,16 @@
     return '<div class="ideia">' +
       '<textarea id="id-' + esc(i.id) + '" data-ideia="' + esc(i.id) + '" aria-label="Ideia">' + esc(i.texto || "") + "</textarea>" +
       (apoios.length ? '<div class="apoios">' + apoios.map((c) => { const lc = achar("leituras", c.leitura_id) || {}; return '<div class="apoio">“' + esc(N.citacaoLonga(c.trecho) ? String(c.trecho).slice(0, 220) + "…" : c.trecho) + '” <span class="mono">' + esc(chamada(c, lc)) + "</span></div>"; }).join("") + "</div>" : "") +
-      '<div class="m">' + (opts.obra ? (l ? '<span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" : '<span class="pill">ideia livre</span>') : "") +
+      '<div class="m">' + (opts.obra ? (l ? '<span class="clickable" data-act="nav" data-v="fichamento" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" : '<span class="pill">ideia livre</span>') : "") +
         (i.tags ? '<span class="xs muted">' + esc(i.tags) + "</span>" : "") +
         '<span style="flex:1"></span>' +
         ((l || !opts.obra) ? '<button class="btn sm ghost" data-act="vincularCitacoes" data-id="' + esc(i.id) + '">' + (apoios.length ? "Citações de apoio (" + apoios.length + ")" : "Ligar a citações") + "</button>" : '<button class="btn sm ghost" data-act="vincularCitacoes" data-id="' + esc(i.id) + '">Ligar a citações</button>') +
         '<button class="btn sm ghost" data-act="editar" data-t="ideias" data-id="' + esc(i.id) + '">Editar</button></div></div>';
   }
 
-  function vLeitura() {
-    const l = achar("leituras", rota.id);
-    if (!l) return empty("Leitura não encontrada.", '<button class="btn" data-act="nav" data-v="leituras">Voltar às leituras</button>');
-    const r = ritmo(l);
+  // Partes do fichamento, usadas na tela de trabalho.
+  function secFicha(l) {
     const f = ficha(l);
-    const cits = citsDe(l);
-    const ids = ideiasDe(l);
-    const voltar = l.disciplina_id && disc(l.disciplina_id) ? '<button class="back" data-act="nav" data-v="disciplina" data-id="' + esc(l.disciplina_id) + '">← ' + esc(disc(l.disciplina_id).nome) + "</button>" : '<button class="back" data-act="nav" data-v="leituras">← Leituras</button>';
     const salvo = (k) => UI.salvoCampo === l.id + k ? ' <span class="saved">salvo</span>' : "";
     let n = 0;
     const passo = (rotulo, k, dica, alvo, alt) => {
@@ -557,13 +555,8 @@
     const conceitos = Array.isArray(f.conceitos) ? f.conceitos : [];
     const relacionadas = (Array.isArray(f.relacionadas) ? f.relacionadas : []).map((id) => achar("leituras", id)).filter(Boolean);
     const outras = S.leituras.filter((x) => x.id !== l.id && !relacionadas.includes(x)).sort((a, b) => String(a.titulo).localeCompare(b.titulo));
-    const temGrifos = cits.some((c) => c.origem === "grifo");
-    const aConferir = cits.filter((c) => c.origem === "grifo" && !c.conferida).length;
-
-    const fichamento = '<section class="panel"><div class="panel-h"><h2>Fichamento</h2><div class="actions">' +
-        '<button class="btn sm ghost" data-act="copiarFichamento" data-id="' + esc(l.id) + '" title="Copia tudo, com a referência, para colar no Word ou no Docs">' + icon.copy + "Copiar fichamento</button>" +
-        (l.status === "Fichado" ? '<span class="pill ok">fichado</span>' : '<button class="btn sm" data-act="marcarFichado" data-id="' + esc(l.id) + '">Marcar como fichado</button>') + "</div></div>" +
-      '<p class="hint" style="margin:-4px 0 14px">Escreva com as suas palavras, sem olhar o texto. O que você consegue explicar sozinho(a) é o que entendeu. As citações ficam mais abaixo, como apoio.</p>' +
+    return '<section class="panel" id="sec-ficha"><div class="panel-h"><h2>Fichamento</h2><span class="xs muted">' + contarFicha(l) + " de 6 partes</span></div>" +
+      '<p class="hint" style="margin:-4px 0 14px">Escreva com as suas palavras. O que você consegue explicar sozinho(a) é o que entendeu. Tudo é salvo sozinho quando você sai do campo.</p>' +
       '<div class="form">' +
         passo("A tese em uma frase", "tese", "Se tivesse que explicar o texto em uma frase, qual seria?", "ficha", 60) +
         passo("Como o autor chega lá", "ideias", "O caminho do argumento: premissas, etapas, exemplos e conclusões. Paráfrase, não cópia.", "col", 140) +
@@ -575,31 +568,131 @@
         passo("Perguntas que o texto deixa", "perguntas", "Dúvidas, pontos a pesquisar, perguntas para a aula ou para a orientação.", "ficha", 80) +
         (n++, '<div class="f passo"><label for="fx-conexao"><span class="n">' + n + "</span>Conexões" + salvo("conexao") + "</label>" +
           '<textarea id="fx-conexao" data-salvar-leitura="conexao" placeholder="Com que outros textos conversa? Onde entra na disciplina ou na ' + esc(trab()) + '?" style="min-height:80px">' + esc(l.conexao || "") + "</textarea>" +
-          '<div class="chips" style="margin-top:6px;align-items:center">' + relacionadas.map((x) => '<span class="chip rel"><span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(x.id) + '">' + esc(x.titulo) + '</span><button class="x" data-act="rmRelacionada" data-id="' + esc(l.id) + '" data-rel="' + esc(x.id) + '" aria-label="Remover relação">✕</button></span>').join("") +
+          '<div class="chips" style="margin-top:6px;align-items:center">' + relacionadas.map((x) => '<span class="chip rel"><span class="clickable" data-act="nav" data-v="fichamento" data-id="' + esc(x.id) + '">' + esc(x.titulo) + '</span><button class="x" data-act="rmRelacionada" data-id="' + esc(l.id) + '" data-rel="' + esc(x.id) + '" aria-label="Remover relação">✕</button></span>').join("") +
           (outras.length ? '<select id="fx-rel" data-relacionar="' + esc(l.id) + '" style="width:auto;max-width:280px"><option value="">+ Relacionar com outro texto</option>' + outras.map((x) => '<option value="' + esc(x.id) + '">' + esc(x.titulo) + "</option>").join("") + "</select>" : "") + "</div></div>") +
-        '<p class="hint">Tudo é salvo sozinho quando você sai do campo.</p></div></section>';
+      "</div></section>";
+  }
 
-    const ideiasHTML = '<section class="panel"><div class="panel-h"><h2>Minhas ideias</h2><span class="xs muted">' + plural(ids.length, "ideia", "ideias") + "</span></div>" +
-      '<p class="hint" style="margin:-4px 0 12px">Uma ideia por cartão: um insight, um argumento seu, algo que você vai usar. Ligue às citações que a sustentam. Todas ficam reunidas em Ideias, no menu.</p>' +
+  function secIdeias(l) {
+    const ids = ideiasDe(l), cits = citsDe(l);
+    return '<section class="panel" id="sec-ideias"><div class="panel-h"><h2>Minhas ideias</h2><span class="xs muted">' + plural(ids.length, "ideia", "ideias") + "</span></div>" +
+      '<p class="hint" style="margin:-4px 0 12px">Uma ideia por cartão: um insight, um argumento seu, algo que você vai usar. Ligue às citações que a sustentam.</p>' +
       (ids.length ? '<div class="stack" style="gap:10px;margin-bottom:12px">' + ids.map((i) => cartaoIdeia(i)).join("") + "</div>" : "") +
       '<div class="nova-ideia"><textarea id="ideia-txt" placeholder="Nova ideia, com as suas palavras" aria-label="Nova ideia" style="min-height:60px"></textarea>' +
         (cits.length ? '<details class="mais"><summary>Apoiar em citações deste texto</summary><div class="list" style="margin-top:6px">' + cits.map((c) => '<label class="row" style="cursor:pointer;align-items:flex-start"><input type="checkbox" class="ideia-cit" value="' + esc(c.id) + '"><span class="grow small">“' + esc(String(c.trecho || "").slice(0, 160)) + (String(c.trecho || "").length > 160 ? "…" : "") + '” <span class="mono muted">' + esc(paginaCit(c, l) ? "p. " + paginaCit(c, l) : "") + "</span></span></label>").join("") + "</div></details>" : "") +
         '<div><button class="btn sm primary" data-act="novaIdeia" data-id="' + esc(l.id) + '">Guardar ideia</button></div></div></section>';
+  }
 
-    const citacoesHTML = '<section class="panel"><div class="panel-h"><h2>Citações</h2><div class="actions">' + (aConferir ? '<span class="pill warn">' + plural(aConferir, "página a conferir", "páginas a conferir") + "</span>" : "") +
+  function secCitacoes(l) {
+    const cits = citsDe(l);
+    const temGrifos = cits.some((c) => c.origem === "grifo");
+    const aConferir = cits.filter((c) => c.origem === "grifo" && !c.conferida).length;
+    return '<section class="panel" id="sec-cit"><div class="panel-h"><h2>Citações</h2><div class="actions">' + (aConferir ? '<span class="pill warn">' + plural(aConferir, "página a conferir", "páginas a conferir") + "</span>" : "") +
         '<button class="btn sm" data-act="importarGrifos" data-id="' + esc(l.id) + '" title="Escolha o PDF em que você grifou">' + icon.up + "Importar grifos do PDF</button></div></div>" +
       (cits.length ? "" : '<p class="small muted" style="margin-bottom:10px">Grife o PDF no leitor que você usa (Adobe, Edge, Preview, Foxit, Drawboard, Xodo…), salve e clique em Importar grifos. Cada trecho grifado vira uma citação com a página. Grifos com nota trazem a nota como comentário.</p>') +
       (temGrifos ? '<div class="deslocamento small"><label for="fx-desl">A página 1 do PDF é a página impressa</label><input type="number" id="fx-desl" data-deslocamento="' + esc(l.id) + '" value="' + (1 + (Number(l.deslocamento_pagina) || 0)) + '" style="width:80px"><span class="hint">Em artigos e capítulos, a numeração impressa raramente começa em 1. Ajuste uma vez e todas as páginas se corrigem.</span></div>' : "") +
       (cits.length ? '<div class="stack" style="gap:16px;margin:10px 0">' + cits.map((c) => blocoCitacao(c, l)).join("") + "</div>" : "") +
       '<details class="mais"><summary>Adicionar trecho à mão</summary><div class="stack" style="gap:8px;background:var(--surface-2);padding:12px;border-radius:8px;margin-top:8px"><div class="two" style="grid-template-columns:110px 1fr"><input type="text" id="cit-pag" placeholder="Página" aria-label="Página"><input type="text" id="cit-com" placeholder="O que isso significa para você (opcional)" aria-label="Comentário"></div>' +
         '<textarea id="cit-trecho" placeholder="Trecho exatamente como está no original" aria-label="Trecho" style="min-height:70px"></textarea><div><button class="btn sm primary" data-act="addCitacao" data-id="' + esc(l.id) + '">Adicionar citação</button></div></div></details></section>';
+  }
 
+  // ---------------------- TELA DE TRABALHO DO FICHAMENTO --------------------
+  // O PDF fica à esquerda, num painel que não é redesenhado a cada alteração
+  // (assim o texto não recarrega nem perde a posição enquanto você escreve).
+  function vFichamento() {
+    const l = achar("leituras", rota.id);
+    if (!l) return empty("Texto não encontrado.", '<button class="btn" data-act="nav" data-v="fichamentos">Voltar aos fichamentos</button>');
+    const cits = citsDe(l), ids = ideiasDe(l);
+    const comPDF = !UI.pdfOculto;
+    return '<div class="ws-head">' +
+        '<div style="min-width:0"><button class="back" data-act="nav" data-v="fichamentos" style="margin-bottom:6px">← Fichamentos</button>' +
+        '<h1 class="ws-t">' + esc(l.titulo) + '</h1><p class="sub">' + esc([l.autores, l.ano, l.tipo_obra].filter(Boolean).join(" · ")) + "</p></div>" +
+        '<div class="actions">' +
+          '<button class="btn sm ghost" data-act="alternarPDF">' + (comPDF ? "Esconder o texto" : "Mostrar o texto") + "</button>" +
+          '<button class="btn sm ghost" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '">Dados da leitura</button>' +
+          '<button class="btn sm" data-act="copiarFichamento" data-id="' + esc(l.id) + '" title="Copia tudo, com a referência, para colar no Word ou no Docs">' + icon.copy + "Copiar fichamento</button>" +
+          (l.status === "Fichado" ? '<span class="pill ok">fichado</span>' : '<button class="btn sm primary" data-act="marcarFichado" data-id="' + esc(l.id) + '">Marcar como fichado</button>') +
+        "</div></div>" +
+      '<div class="ws' + (comPDF ? "" : " sem-pdf") + '">' +
+        (comPDF ? '<div class="ws-pdf" id="pdf-slot"></div>' : "") +
+        '<div class="ws-ficha">' +
+          '<nav class="ws-tabs" aria-label="Partes do fichamento"><a href="#" data-act="irSec" data-v="sec-ficha">Fichamento</a><a href="#" data-act="irSec" data-v="sec-ideias">Ideias (' + ids.length + ')</a><a href="#" data-act="irSec" data-v="sec-cit">Citações (' + cits.length + ")</a></nav>" +
+          (l.referencia ? '<div class="ref-box small" style="margin-bottom:14px">' + N.refHTML(l.referencia) + "</div>" : '<p class="small muted" style="margin-bottom:14px">Sem referência ainda. <a href="#" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '">Preencher nos dados da leitura</a>.</p>') +
+          '<div class="stack">' + secFicha(l) + secIdeias(l) + secCitacoes(l) + "</div>" +
+        "</div></div>";
+  }
+
+  // Painel fixo com o PDF. Fica fora da área redesenhada e acompanha o espaço reservado.
+  const PDF = { chave: null, path: null, url: null, el: null };
+  function painelPDF() {
+    if (!PDF.el) {
+      PDF.el = document.createElement("div");
+      PDF.el.id = "pdf-pane"; PDF.el.hidden = true;
+      document.body.appendChild(PDF.el);
+    }
+    return PDF.el;
+  }
+  function posicionarPDF() {
+    const p = PDF.el, slot = document.getElementById("pdf-slot");
+    if (!p) return;
+    if (!slot || rota.v !== "fichamento") { p.hidden = true; return; }
+    const r = slot.getBoundingClientRect();
+    if (r.width < 10) { p.hidden = true; return; }
+    p.hidden = false;
+    const topo = Math.max(r.top, 70);
+    p.style.left = r.left + "px"; p.style.width = r.width + "px";
+    p.style.top = topo + "px"; p.style.height = Math.max(200, Math.min(r.bottom, window.innerHeight) - topo - 12) + "px";
+  }
+  async function atualizarPDF() {
+    if (typeof document.createElement !== "function") return;
+    const p = painelPDF();
+    const l = rota.v === "fichamento" ? achar("leituras", rota.id) : null;
+    if (!l || UI.pdfOculto) { posicionarPDF(); return; }
+    const path = l.arquivo_path || null, chave = l.id + "|" + (path || "");
+    if (PDF.chave !== chave) {
+      PDF.chave = chave; PDF.path = path;
+      if (PDF.url && PDF.url.startsWith("blob:") && !DEMO) { try { URL.revokeObjectURL(PDF.url); } catch (e) { /* ok */ } }
+      PDF.url = null;
+      if (!path) {
+        p.innerHTML = '<div class="pdf-vazio"><b>Este texto ainda não tem arquivo</b><span class="small muted">Anexe o PDF para ler e fichar lado a lado.</span><button class="btn primary" data-act="anexarLeitura" data-id="' + esc(l.id) + '">' + icon.up + "Anexar arquivo</button></div>";
+      } else if (!ehPDF({ name: l.arquivo_nome || path, type: "" })) {
+        p.innerHTML = '<div class="pdf-vazio"><b>Este arquivo não é PDF</b><span class="small muted">Só PDF pode ser mostrado aqui ao lado. Abra o arquivo em outra aba ou anexe a versão em PDF.</span><button class="btn" data-act="abrirArquivo" data-path="' + esc(path) + '">' + icon.file + "Abrir em outra aba</button></div>";
+      } else {
+        p.innerHTML = '<div class="pdf-vazio"><span class="small muted">Carregando o texto…</span></div>';
+        try {
+          const link = await api.linkArquivo(path);
+          let url = link;
+          if (!link.startsWith("blob:")) {
+            const blob = await (await fetch(link)).blob();
+            url = URL.createObjectURL(new Blob([blob], { type: ehPDF({ name: l.arquivo_nome || path, type: blob.type }) ? "application/pdf" : blob.type }));
+          }
+          if (PDF.chave !== chave) return; // trocou de texto no meio do carregamento
+          PDF.url = url;
+          p.innerHTML = '<iframe title="Texto: ' + esc(l.titulo) + '" src="' + esc(url) + '"></iframe>';
+        } catch (e) {
+          if (PDF.chave !== chave) return;
+          p.innerHTML = '<div class="pdf-vazio"><b>Não consegui mostrar o texto aqui</b><span class="small muted">' + esc(msgErro(e)) + '</span><button class="btn" data-act="abrirArquivo" data-path="' + esc(path) + '">' + icon.file + "Abrir em outra aba</button></div>";
+        }
+      }
+    }
+    posicionarPDF();
+  }
+  window.addEventListener("resize", () => posicionarPDF());
+  window.addEventListener("scroll", () => posicionarPDF(), { passive: true });
+
+  // ---------------------------- LEITURA -------------------------------------
+  // Só os dados do texto; o fichamento tem tela própria.
+  function vLeitura() {
+    const l = achar("leituras", rota.id);
+    if (!l) return empty("Leitura não encontrada.", '<button class="btn" data-act="nav" data-v="leituras">Voltar às leituras</button>');
+    const r = ritmo(l);
+    const voltar = l.disciplina_id && disc(l.disciplina_id) ? '<button class="back" data-act="nav" data-v="disciplina" data-id="' + esc(l.disciplina_id) + '">← ' + esc(disc(l.disciplina_id).nome) + "</button>" : '<button class="back" data-act="nav" data-v="leituras">← Leituras</button>';
     return voltar +
       '<div class="head"><div style="min-width:0"><span class="label">' + esc([l.tipo_obra, destNome(l)].filter(Boolean).join(" · ") || "Leitura") + '</span><h1 style="margin-top:6px">' + esc(l.titulo) + '</h1><p class="sub">' + esc([l.autores, l.ano].filter(Boolean).join(" · ")) + "</p></div>" +
-      '<div class="actions">' + (l.arquivo_path ? '<button class="btn primary" data-act="abrirArquivo" data-path="' + esc(l.arquivo_path) + '">' + icon.file + "Abrir texto</button>" : '<button class="btn" data-act="anexarLeitura" data-id="' + esc(l.id) + '">' + icon.up + "Anexar arquivo</button>") +
+      '<div class="actions"><button class="btn primary" data-act="nav" data-v="fichamento" data-id="' + esc(l.id) + '">' + (l.status === "Fichado" ? "Ver fichamento" : contarFicha(l) || citsDe(l).length ? "Continuar fichamento" : "Abrir fichamento") + "</button>" +
+      (l.arquivo_path ? '<button class="btn" data-act="abrirArquivo" data-path="' + esc(l.arquivo_path) + '">' + icon.file + "Abrir texto</button>" : '<button class="btn" data-act="anexarLeitura" data-id="' + esc(l.id) + '">' + icon.up + "Anexar arquivo</button>") +
       '<button class="btn" data-act="editar" data-t="leituras" data-id="' + esc(l.id) + '">Editar dados</button></div></div>' +
-      '<div class="cols"><div class="stack">' + fichamento + ideiasHTML + citacoesHTML +
-      '</div><div class="stack">' +
+      '<div class="cols"><div class="stack">' +
         '<section class="panel"><div class="panel-h"><h2>Progresso</h2>' + statusPill(l.status) + "</div>" +
           '<div class="two"><div class="f"><label for="pg-lidas">Já li até a página</label><input type="number" min="0" id="pg-lidas" data-pagina="' + esc(l.id) + '" value="' + (l.paginas_lidas || 0) + '"></div>' +
           '<div class="f"><label for="pg-total">De um total de</label><input type="number" min="0" id="pg-total" data-total="' + esc(l.id) + '" value="' + (l.paginas_total || "") + '" placeholder="páginas"></div></div>' +
@@ -607,8 +700,11 @@
           '<div class="f"><label for="pg-prazo">Ler até</label><input type="date" id="pg-prazo" data-prazo="' + esc(l.id) + '" value="' + esc(l.prazo || "") + '"></div>' +
           (l.disciplina_id && disc(l.disciplina_id) && proxAula(disc(l.disciplina_id)) && l.prazo !== proxAula(disc(l.disciplina_id)) ? '<button class="btn sm ghost" style="margin-top:6px" data-act="prazoProxAula" data-id="' + esc(l.id) + '">Usar a próxima aula (' + esc(fmtD(proxAula(disc(l.disciplina_id)))) + ")</button>" : "") +
           (r.porDia ? '<div class="pace" style="margin-top:12px"><span class="big">' + r.porDia + '</span><span class="small">páginas por dia para terminar ' + (r.dias > 0 ? "até " + esc(fmtDia(l.prazo)) + " (" + plural(r.dias, "dia", "dias") + ")" : "hoje") + "</span></div>" : "") +
-          '<div class="xs muted" style="margin-top:12px">Fichamento: ' + contarFicha(l) + " de 6 partes preenchidas · " + plural(cits.length, "citação", "citações") + "</div>" +
           "</section>" +
+        '<section class="panel"><div class="panel-h"><h2>Dados</h2></div><dl class="dl">' +
+          [["Tipo", l.tipo_obra], ["Idioma", l.idioma], ["Páginas na obra", l.pagina_inicial ? "p. " + l.pagina_inicial + (l.pagina_final ? "-" + l.pagina_final : "") : ""], ["DOI", l.doi], ["ISBN", l.isbn], ["Palavras-chave", l.tags], ["Arquivo", l.arquivo_nome ? l.arquivo_nome + " (" + tamanho(l.arquivo_tamanho) + ")" : ""]]
+            .filter(([, v]) => v).map(([k, v]) => "<dt>" + k + "</dt><dd>" + esc(v) + "</dd>").join("") + "</dl></section>" +
+      '</div><div class="stack">' +
         '<section class="panel"><div class="panel-h"><h2>Referência</h2>' + (l.referencia ? (l.referencia_conferida ? '<span class="pill ok">conferida</span>' : '<span class="pill warn">gerada automaticamente</span>') : "") + "</div>" +
           (l.referencia ? '<div class="ref-box">' + N.refHTML(l.referencia) + "</div>" +
             '<div class="actions" style="margin-top:10px"><button class="btn sm" data-act="copiarRef" data-id="' + esc(l.id) + '">' + icon.copy + "Copiar</button>" +
@@ -616,9 +712,6 @@
             (!l.referencia_conferida ? '<p class="hint" style="margin-top:8px">Montada a partir dos dados públicos da obra. Confira edição, local e editora na folha de rosto antes de usar.</p>' : "")
             : '<p class="small muted">Sem referência ainda.</p>') +
           '<div class="f" style="margin-top:14px"><label for="busca-id">Preencher pelo DOI ou ISBN</label><div style="display:flex;gap:8px"><input type="text" id="busca-id" placeholder="10.xxxx/... ou 978..." value="' + esc(l.doi || l.isbn || "") + '"><button class="btn" data-act="buscarDados" data-id="' + esc(l.id) + '">Buscar</button></div></div></section>' +
-        '<section class="panel"><div class="panel-h"><h2>Dados</h2></div><dl class="dl">' +
-          [["Tipo", l.tipo_obra], ["Idioma", l.idioma], ["Páginas na obra", l.pagina_inicial ? "p. " + l.pagina_inicial + (l.pagina_final ? "-" + l.pagina_final : "") : ""], ["DOI", l.doi], ["ISBN", l.isbn], ["Palavras-chave", l.tags], ["Arquivo", l.arquivo_nome ? l.arquivo_nome + " (" + tamanho(l.arquivo_tamanho) + ")" : ""]]
-            .filter(([, v]) => v).map(([k, v]) => "<dt>" + k + "</dt><dd>" + esc(v) + "</dd>").join("") + "</dl></section>" +
       "</div></div>";
   }
 
@@ -654,20 +747,54 @@
     return { txt, html };
   }
 
-  // ---------------------------- IDEIAS --------------------------------------
-  function vIdeias() {
-    const aba = UI.ideiasAba === "citacoes" ? "citacoes" : "ideias";
+  // ---------------------------- FICHAMENTOS ---------------------------------
+  // Página consolidada: todos os textos com o andamento do fichamento, e as
+  // ideias e citações de todos eles, pesquisáveis.
+  function vFichamentos() {
+    const aba = ["ideias", "citacoes"].includes(UI.fichAba) ? UI.fichAba : "textos";
     const abas = '<div class="toolbar"><div class="chips">' +
-      [["ideias", "Minhas ideias (" + S.ideias.length + ")"], ["citacoes", "Citações (" + S.citacoes.length + ")"]].map(([k, t]) => '<button class="chip" data-act="filtro" data-k="ideiasAba" data-v="' + k + '" aria-pressed="' + (aba === k) + '">' + t + "</button>").join("") + "</div></div>";
-    const head = '<div class="head"><div><h1>Ideias</h1><p class="sub">O que você pensou a partir das leituras, e as citações que sustentam cada ideia.</p></div></div>';
+      [["textos", "Textos (" + S.leituras.length + ")"], ["ideias", "Minhas ideias (" + S.ideias.length + ")"], ["citacoes", "Citações (" + S.citacoes.length + ")"]]
+        .map(([k, t]) => '<button class="chip" data-act="filtro" data-k="fichAba" data-v="' + k + '" aria-pressed="' + (aba === k) + '">' + t + "</button>").join("") + "</div></div>";
+    const head = '<div class="head"><div><h1>Fichamentos</h1><p class="sub">Escolha um texto para fichar com o PDF ao lado. As ideias e as citações de todos os textos ficam reunidas aqui.</p></div></div>';
+    if (aba === "ideias") return head + abas + listaIdeias();
     if (aba === "citacoes") return head + abas + vCitacoesLista();
+
+    const st = UI.fichStatus, q = UI.fichQ.trim().toLowerCase();
+    const fase = (l) => (l.status === "Fichado" ? 2 : contarFicha(l) || citsDe(l).length || ideiasDe(l).length ? 0 : 1);
+    let ls = S.leituras.slice();
+    if (st === "pendentes") ls = ls.filter((l) => l.status !== "Fichado");
+    else if (st === "andamento") ls = ls.filter((l) => fase(l) === 0);
+    else if (st === "fichados") ls = ls.filter((l) => l.status === "Fichado");
+    ls = ls.filter((l) => casaDestino(l, UI.citDest));
+    if (q) ls = ls.filter((l) => [l.titulo, l.autores, l.ano, l.tags, ficha(l).tese].join(" ").toLowerCase().includes(q));
+    ls.sort((a, b) => fase(a) - fase(b) || String(a.prazo || "9999").localeCompare(String(b.prazo || "9999")) || String(a.titulo).localeCompare(b.titulo));
+    const n = (f) => S.leituras.filter(f).length;
+    const chips = [["pendentes", "Pendentes (" + n((l) => l.status !== "Fichado") + ")"], ["andamento", "Em andamento (" + n((l) => fase(l) === 0) + ")"], ["fichados", "Fichados (" + n((l) => l.status === "Fichado") + ")"], ["todos", "Todos (" + S.leituras.length + ")"]];
+    return head + abas +
+      '<div class="toolbar"><div class="chips">' + chips.map(([k, t]) => '<button class="chip" data-act="filtro" data-k="fichStatus" data-v="' + k + '" aria-pressed="' + (st === k) + '">' + t + "</button>").join("") + "</div></div>" +
+      '<div class="toolbar"><input type="search" class="search" id="fich-q" data-input="fichQ" placeholder="Buscar por título, autor, palavra-chave ou tese" value="' + esc(UI.fichQ) + '">' +
+      '<select id="cit-dest" data-change="citDest" style="width:auto;max-width:260px"><option value="">Todas as disciplinas</option>' + opcoesDestino(UI.citDest) + "</select></div>" +
+      (ls.length ? '<section class="panel"><div class="tablewrap"><table><thead><tr><th>Texto</th><th>Para</th><th>Andamento</th><th>Ideias</th><th>Citações</th><th></th></tr></thead><tbody>' +
+        ls.map((l) => {
+          const c = contarFicha(l), cits = citsDe(l), conf = cits.filter((x) => x.origem === "grifo" && !x.conferida).length, tese = ficha(l).tese;
+          return '<tr class="clickable" data-act="nav" data-v="fichamento" data-id="' + esc(l.id) + '"><td style="min-width:260px"><div style="font-weight:500">' + esc(l.titulo) + '</div><div class="xs muted">' + esc([l.autores, l.ano, l.tipo_obra].filter(Boolean).join(" · ")) + "</div>" +
+            (tese ? '<div class="small" style="margin-top:4px;color:var(--ink)">' + esc(String(tese).slice(0, 140)) + (String(tese).length > 140 ? "…" : "") + "</div>" : "") + "</td>" +
+            "<td>" + destTag(l) + "</td>" +
+            '<td style="min-width:140px">' + (l.status === "Fichado" ? '<span class="pill ok">fichado</span>' : c || cits.length ? '<div class="xs muted">' + c + " de 6 partes</div>" + bar(c, 6, "") : '<span class="muted xs">não iniciado</span>') + "</td>" +
+            '<td class="mono">' + ideiasDe(l).length + "</td>" +
+            '<td><span class="mono">' + cits.length + "</span>" + (conf ? ' <span class="pill warn">' + conf + " a conferir</span>" : "") + "</td>" +
+            '<td><button class="btn sm' + (l.status === "Fichado" ? "" : " primary") + '" data-act="nav" data-v="fichamento" data-id="' + esc(l.id) + '">' + (l.status === "Fichado" ? "Ver" : c || cits.length ? "Continuar" : "Fichar") + "</button></td></tr>";
+        }).join("") + "</tbody></table></div></section>"
+        : (S.leituras.length ? empty("Nenhum texto com esse filtro.") : empty("Deposite seus textos em Leituras para começar a fichar.", '<button class="btn primary" data-act="depositar">' + icon.up + "Depositar textos</button>")));
+  }
+
+  function listaIdeias() {
     const q = UI.ideiaQ.trim().toLowerCase();
     let is = S.ideias.map((i) => ({ i, l: i.leitura_id ? achar("leituras", i.leitura_id) : null }));
     is = is.filter((x) => !UI.citDest || (x.l && casaDestino(x.l, UI.citDest)));
     if (q) is = is.filter((x) => [x.i.texto, x.i.tags, x.l && x.l.titulo, x.l && x.l.autores].join(" ").toLowerCase().includes(q));
     is.sort((a, b) => String(b.i.updated_at || b.i.created_at).localeCompare(String(a.i.updated_at || a.i.created_at)));
-    return head + abas +
-      '<div class="toolbar"><input type="search" class="search" id="ideia-q" data-input="ideiaQ" placeholder="Buscar nas ideias, por palavra, tema ou obra" value="' + esc(UI.ideiaQ) + '">' +
+    return '<div class="toolbar"><input type="search" class="search" id="ideia-q" data-input="ideiaQ" placeholder="Buscar nas ideias, por palavra, tema ou obra" value="' + esc(UI.ideiaQ) + '">' +
       '<select id="cit-dest" data-change="citDest" style="width:auto;max-width:260px"><option value="">Todas as disciplinas</option>' + opcoesDestino(UI.citDest) + "</select>" +
       '<span class="small muted">' + plural(is.length, "ideia", "ideias") + "</span></div>" +
       '<section class="panel" style="margin-bottom:14px"><div class="nova-ideia"><textarea id="ideia-livre" placeholder="Uma ideia que não vem de um texto só? Anote aqui." aria-label="Nova ideia livre" style="min-height:56px"></textarea><div><button class="btn sm primary" data-act="novaIdeia">Guardar ideia</button></div></div></section>' +
@@ -687,7 +814,8 @@
       (cs.length ? '<section class="panel"><div class="stack" style="gap:20px">' + cs.map(({ c, l }) => blocoCitacao(c, l, { obra: true })).join("") + "</div></section>"
         : empty(S.citacoes.length ? "Nenhuma citação encontrada." : "As citações entram aqui quando você importa os grifos de um PDF ou adiciona um trecho no fichamento."));
   }
-  const vCitacoes = () => { UI.ideiasAba = "citacoes"; return vIdeias(); };
+  const vCitacoes = () => { UI.fichAba = "citacoes"; return vFichamentos(); };
+  const vIdeias = () => { UI.fichAba = "ideias"; return vFichamentos(); };
 
   // Modal para escolher as citações que sustentam uma ideia.
   function abrirVinculo(id) {
@@ -838,7 +966,7 @@
     return '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Horas estudadas nas últimas 8 semanas">' + g + "</svg>";
   }
 
-  const VIEWS = { inicio: vInicio, disciplinas: vDisciplinas, disciplina: vDisciplina, leituras: vLeituras, leitura: vLeitura, citacoes: vCitacoes, ideias: vIdeias, tarefas: vTarefas, dissertacao: vDissertacao, rotina: vRotina };
+  const VIEWS = { inicio: vInicio, disciplinas: vDisciplinas, disciplina: vDisciplina, leituras: vLeituras, leitura: vLeitura, citacoes: vCitacoes, ideias: vIdeias, fichamentos: vFichamentos, fichamento: vFichamento, tarefas: vTarefas, dissertacao: vDissertacao, rotina: vRotina };
 
   // --------------------------------------------------------------------------
   // Pomodoro: foco, pausa curta e pausa longa.
@@ -1449,7 +1577,9 @@
     loginVoltar: () => { loginEnviado = false; erroLogin = ""; render(); },
     sair: async () => { UI.menu = false; await api.sair(); },
     menu: () => { UI.menu = !UI.menu; render(); },
-    nav: (el) => { if (el.dataset.v === "ideias") UI.ideiasAba = "ideias"; ir(el.dataset.v, el.dataset.id); },
+    nav: (el) => { if (el.dataset.v === "fichamentos") UI.fichAba = "textos"; ir(el.dataset.v, el.dataset.id); },
+    alternarPDF: () => { UI.pdfOculto = !UI.pdfOculto; try { localStorage.setItem("hub-pdf-oculto", UI.pdfOculto ? "1" : ""); } catch (e) { /* sem armazenamento */ } render(); },
+    irSec: (el) => { const s = document.getElementById(el.dataset.v); if (s) s.scrollIntoView({ behavior: "smooth", block: "start" }); },
     novo: (el) => {
       const pre = {};
       if (el.dataset.dest) pre.destino = el.dataset.dest;

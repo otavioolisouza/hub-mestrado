@@ -304,3 +304,19 @@ details.mais[open] > summary { color: var(--ink); }
 .deslocamento { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: var(--surface-2); border-radius: 8px; margin-bottom: 6px; }
 .deslocamento .hint { flex-basis: 100%; }
 @media (max-width: 700px) { .conceito { grid-template-columns: 1fr; } }
+
+/* Tela de trabalho do fichamento: texto à esquerda, fichamento à direita */
+body.modo-ficha .page, body.modo-ficha .topbar-in { max-width: 1760px; }
+.ws-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.ws-t { font-size: 1.45rem; line-height: 1.25; }
+.ws { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.ws.sem-pdf { grid-template-columns: minmax(0, 860px); justify-content: center; }
+.ws-pdf { position: sticky; top: 76px; height: calc(100vh - 92px); border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
+#pdf-pane { position: fixed; z-index: 20; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); }
+#pdf-pane iframe { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.pdf-vazio { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 24px; }
+.ws-tabs { position: sticky; top: 60px; z-index: 5; display: flex; gap: 18px; padding: 10px 2px; margin-bottom: 10px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: .88rem; }
+.ws-tabs a { color: var(--muted); text-decoration: none; }
+.ws-tabs a:hover { color: var(--ink); }
+.ws-ficha section.panel { scroll-margin-top: 110px; }
+@media (max-width: 1020px) { .ws { grid-template-columns: minmax(0, 1fr); } .ws-pdf { display: none; } }
