@@ -6,7 +6,7 @@
 // Ao publicar uma versão nova dos arquivos, aumente o número de VERSAO para
 // que todos recebam a atualização.
 // ============================================================================
-const VERSAO = "hub-pos-v2";
+const VERSAO = "hub-pos-v3";
 const ARQUIVOS = [
   "./",
   "./index.html",

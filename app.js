@@ -78,7 +78,7 @@
   // --------------------------------------------------------------------------
   // Camada de dados
   // --------------------------------------------------------------------------
-  const TABELAS = ["disciplinas", "leituras", "citacoes", "tarefas", "materiais", "capitulos", "marcos", "reunioes", "blocos", "sessoes"];
+  const TABELAS = ["disciplinas", "leituras", "citacoes", "tarefas", "materiais", "capitulos", "marcos", "reunioes", "blocos", "sessoes", "ideias"];
 
   function apiSupabase() {
     const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
@@ -108,6 +108,7 @@
         return out;
       },
       async inserir(t, row) { return ok(await sb.from(t).insert(row).select().single()); },
+      async inserirVarios(t, rows) { return rows.length ? ok(await sb.from(t).insert(rows).select()) : []; },
       async atualizar(t, id, patch) { return ok(await sb.from(t).update(patch).eq("id", id).select().single()); },
       async apagar(t, id) { ok(await sb.from(t).delete().eq("id", id)); },
       async salvarDissertacao(row) { return ok(await sb.from("dissertacao").upsert(Object.assign({}, row, { user_id: uid })).select().single()); },
@@ -133,10 +134,11 @@
       async enviarLink() {}, async verificarCodigo() {}, sair() { toast("No modo demonstração não há conta para sair."); },
       async carregar() { return JSON.parse(JSON.stringify(db)); },
       async inserir(t, row) { const r = Object.assign({ id: uuid(), created_at: agora() }, row); db[t].push(r); return JSON.parse(JSON.stringify(r)); },
+      async inserirVarios(t, rows) { const out = []; for (const row of rows) out.push(await this.inserir(t, row)); return out; },
       async atualizar(t, id, patch) { const r = db[t].find((x) => x.id === id); Object.assign(r, patch); return JSON.parse(JSON.stringify(r)); },
       async apagar(t, id) {
         db[t] = db[t].filter((x) => x.id !== id);
-        if (t === "leituras") db.citacoes = db.citacoes.filter((c) => c.leitura_id !== id);
+        if (t === "leituras") { db.citacoes = db.citacoes.filter((c) => c.leitura_id !== id); db.ideias.forEach((i) => { if (i.leitura_id === id) i.leitura_id = null; }); }
       },
       async salvarDissertacao(row) { db.dissertacao = Object.assign({}, db.dissertacao, row); return db.dissertacao; },
       async salvarPerfil(patch) { Object.assign(db.profile, patch); return db.profile; },
@@ -155,7 +157,7 @@
   TABELAS.forEach((t) => (S[t] = []));
   const UI = {
     leitStatus: "abertas", leitDest: "", leitQ: "",
-    citQ: "", citDest: "",
+    citQ: "", citDest: "", ideiaQ: "", ideiasAba: "ideias",
     tarFiltro: "abertas", tarDest: "",
     menu: false, confirmar: null, salvoCampo: null,
   };
@@ -191,7 +193,8 @@
       if (row.arquivo_path) { try { await api.apagarArquivo(row.arquivo_path); } catch (e) { console.warn(e); } }
       if (t === "disciplinas") { await recarregar(); return; }
       S[t] = S[t].filter((x) => x.id !== id);
-      if (t === "leituras") S.citacoes = S.citacoes.filter((c) => c.leitura_id !== id);
+      if (t === "leituras") { S.citacoes = S.citacoes.filter((c) => c.leitura_id !== id); S.ideias.forEach((i) => { if (i.leitura_id === id) i.leitura_id = null; }); }
+      if (t === "citacoes") S.ideias.forEach((i) => { if ((i.citacoes || []).includes(id)) i.citacoes = i.citacoes.filter((x) => x !== id); });
       render(); toast("Excluído.");
     } catch (e) { falha(e); }
   }
@@ -236,7 +239,7 @@
   // --------------------------------------------------------------------------
   // Rotas
   // --------------------------------------------------------------------------
-  const NAV = () => [["inicio", "Início"], ["disciplinas", "Disciplinas"], ["leituras", "Leituras"], ["citacoes", "Citações"], ["tarefas", "Tarefas"], ["dissertacao", TRAB()], ["rotina", "Rotina"]];
+  const NAV = () => [["inicio", "Início"], ["disciplinas", "Disciplinas"], ["leituras", "Leituras"], ["ideias", "Ideias"], ["tarefas", "Tarefas"], ["dissertacao", TRAB()], ["rotina", "Rotina"]];
   function lerHash() {
     const h = decodeURIComponent((location.hash || "").replace(/^#/, ""));
     const [v, id] = h.split("/");
@@ -287,7 +290,7 @@
     const email = S.sessao && S.sessao.user ? S.sessao.user.email : "";
     const nome = nomeValido((S.profile || {}).full_name) ? S.profile.full_name : email;
     const ini = String(nome || "?").trim().charAt(0).toUpperCase();
-    const navAtual = { disciplina: "disciplinas", leitura: "leituras" }[rota.v] || rota.v;
+    const navAtual = { disciplina: "disciplinas", leitura: "leituras", citacoes: "ideias" }[rota.v] || rota.v;
     return (DEMO ? '<div class="demo-bar">Modo demonstração: dados fictícios, nada é salvo. Configure o Supabase (veja o GUIA.md) para usar de verdade.</div>' : "") +
       '<header class="topbar"><div class="topbar-in">' +
       '<button class="brand" data-act="nav" data-v="inicio" aria-label="Início">' + LOGO + '<b>' + NOME_HUB + '</b></button>' +
@@ -467,29 +470,135 @@
         : (S.leituras.length ? empty("Nenhuma leitura com esse filtro.") : '<div class="drop" data-act="depositar"><b>Sua biblioteca está vazia</b><span class="small muted">Arraste os PDFs dos textos para cá. O hub conta as páginas, procura DOI ou ISBN e monta a referência ABNT.</span></div>'));
   }
 
+  // ---------------------------- FICHAMENTO ----------------------------------
+  // O fichamento é guiado por perguntas e escrito com as palavras de quem lê.
+  // As citações entram sozinhas pelos grifos do PDF e servem de apoio às ideias.
+  const FIRAC = [
+    ["fatos", "Fatos", "O que aconteceu, quem são as partes, como o caso chegou ao tribunal."],
+    ["questao", "Questão jurídica", "A pergunta que o tribunal precisou responder."],
+    ["normas", "Normas aplicadas", "Dispositivos, precedentes e princípios invocados."],
+    ["ratio", "Razões de decidir", "O fundamento determinante (ratio decidendi), com suas palavras."],
+    ["dispositivo", "Resultado", "O que foi decidido e por qual placar."],
+    ["divergencia", "Votos divergentes e observações", "Divergências, ressalvas, obiter dicta relevantes."],
+  ];
+  const ficha = (l) => (l && l.ficha && typeof l.ficha === "object" && !Array.isArray(l.ficha) ? l.ficha : {});
+  const ehJuris = (l) => /jurisprud/i.test(String((l && l.tipo_obra) || ""));
+  const paginaCit = (c, l) => c.pagina || (c.pagina_pdf != null ? String(Number(c.pagina_pdf) + (Number((l || {}).deslocamento_pagina) || 0)) : "");
+  const ordemPag = (l) => (a, b) => (parseInt(paginaCit(a, l), 10) || 0) - (parseInt(paginaCit(b, l), 10) || 0) || String(a.created_at).localeCompare(String(b.created_at));
+  const citsDe = (l) => S.citacoes.filter((c) => c.leitura_id === l.id).sort(ordemPag(l));
+  const ideiasDe = (l) => S.ideias.filter((i) => i.leitura_id === l.id).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const chamada = (c, l) => N.chamadaCitacao({ autores: l.autores, titulo: l.titulo, ano: l.ano, pagina: paginaCit(c, l), traducao: !!(c.traducao && c.traducao.trim()) });
+  // Citação pronta para colar no texto, no formato da NBR 10520:2023.
+  function formatarCitacao(c, l) {
+    const corpo = String((c.traducao && c.traducao.trim()) || c.trecho || "").trim();
+    const ch = chamada(c, l);
+    if (N.citacaoLonga(corpo)) {
+      const semPonto = corpo.replace(/[\s.]+$/, "");
+      return { txt: semPonto + " " + ch + ".", html: '<p style="margin:0 0 0 4cm;font-size:10pt;line-height:1;text-align:justify">' + esc(semPonto) + " " + esc(ch) + ".</p>", longa: true };
+    }
+    const t = "“" + corpo + "” " + ch;
+    return { txt: t, html: esc(t), longa: false };
+  }
+  const contarFicha = (l) => {
+    const f = ficha(l);
+    const campos = [f.tese, l.ideias, l.critica, f.perguntas, l.conexao].filter((v) => v && String(v).trim()).length;
+    return campos + (ideiasDe(l).length ? 1 : 0);
+  };
+
+  function blocoCitacao(c, l, opts) {
+    opts = opts || {};
+    const pg = paginaCit(c, l);
+    const aConferir = c.origem === "grifo" && !c.conferida;
+    const pagHTML = pg ? '<span class="mono">p. ' + esc(pg) + "</span>" : '<span style="color:var(--warn)">sem página</span>';
+    return '<div class="quote' + (opts.compacta ? " compacta" : "") + '"><div class="q">' + (c.trecho ? "“" + esc(c.trecho) + "”" : '<span class="muted">(grifo sem texto: o PDF pode ser imagem escaneada. Clique em Editar e digite o trecho.)</span>') + "</div>" +
+      (c.traducao ? '<div class="small" style="font-style:italic">Tradução: ' + esc(c.traducao) + "</div>" : "") +
+      '<div class="m">' + (opts.obra ? '<span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" : "") +
+        pagHTML + (c.origem === "grifo" ? '<span class="pill mark" title="Importada dos grifos do PDF">grifo</span>' : "") +
+        (aConferir ? '<span class="pill warn">conferir página</span><button class="btn sm ghost" data-act="conferirPagina" data-id="' + esc(c.id) + '" title="A página está certa">Página ok</button>' : "") +
+        (opts.obra ? destTag(l) : "") +
+        '<span style="flex:1"></span><button class="btn sm ghost" data-act="copiarCitacao" data-id="' + esc(c.id) + '" title="Copia com a chamada (Autor, ano, p.) no formato da ABNT">' + icon.copy + "Copiar</button>" +
+        '<button class="btn sm ghost" data-act="editar" data-t="citacoes" data-id="' + esc(c.id) + '">Editar</button></div>' +
+      (opts.obra ? (c.comentario ? '<div class="small muted">' + esc(c.comentario) + "</div>" : "")
+        : '<textarea class="cit-nota" id="cn-' + esc(c.id) + '" data-cit-nota="' + esc(c.id) + '" placeholder="O que isso significa para você? (opcional)" aria-label="Comentário sobre a citação">' + esc(c.comentario || "") + "</textarea>") +
+      "</div>";
+  }
+
+  function cartaoIdeia(i, opts) {
+    opts = opts || {};
+    const l = i.leitura_id ? achar("leituras", i.leitura_id) : null;
+    const apoios = (i.citacoes || []).map((id) => achar("citacoes", id)).filter(Boolean);
+    return '<div class="ideia">' +
+      '<textarea id="id-' + esc(i.id) + '" data-ideia="' + esc(i.id) + '" aria-label="Ideia">' + esc(i.texto || "") + "</textarea>" +
+      (apoios.length ? '<div class="apoios">' + apoios.map((c) => { const lc = achar("leituras", c.leitura_id) || {}; return '<div class="apoio">“' + esc(N.citacaoLonga(c.trecho) ? String(c.trecho).slice(0, 220) + "…" : c.trecho) + '” <span class="mono">' + esc(chamada(c, lc)) + "</span></div>"; }).join("") + "</div>" : "") +
+      '<div class="m">' + (opts.obra ? (l ? '<span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" : '<span class="pill">ideia livre</span>') : "") +
+        (i.tags ? '<span class="xs muted">' + esc(i.tags) + "</span>" : "") +
+        '<span style="flex:1"></span>' +
+        ((l || !opts.obra) ? '<button class="btn sm ghost" data-act="vincularCitacoes" data-id="' + esc(i.id) + '">' + (apoios.length ? "Citações de apoio (" + apoios.length + ")" : "Ligar a citações") + "</button>" : '<button class="btn sm ghost" data-act="vincularCitacoes" data-id="' + esc(i.id) + '">Ligar a citações</button>') +
+        '<button class="btn sm ghost" data-act="editar" data-t="ideias" data-id="' + esc(i.id) + '">Editar</button></div></div>';
+  }
+
   function vLeitura() {
     const l = achar("leituras", rota.id);
     if (!l) return empty("Leitura não encontrada.", '<button class="btn" data-act="nav" data-v="leituras">Voltar às leituras</button>');
     const r = ritmo(l);
-    const cits = S.citacoes.filter((c) => c.leitura_id === l.id).sort((a, b) => (parseInt(a.pagina, 10) || 0) - (parseInt(b.pagina, 10) || 0));
+    const f = ficha(l);
+    const cits = citsDe(l);
+    const ids = ideiasDe(l);
     const voltar = l.disciplina_id && disc(l.disciplina_id) ? '<button class="back" data-act="nav" data-v="disciplina" data-id="' + esc(l.disciplina_id) + '">← ' + esc(disc(l.disciplina_id).nome) + "</button>" : '<button class="back" data-act="nav" data-v="leituras">← Leituras</button>';
     const salvo = (k) => UI.salvoCampo === l.id + k ? ' <span class="saved">salvo</span>' : "";
-    const campo = (k, rotulo, dica) => '<div class="f"><label for="fx-' + k + '">' + rotulo + salvo(k) + '</label><textarea id="fx-' + k + '" data-salvar-leitura="' + k + '" placeholder="' + esc(dica) + '" style="min-height:130px">' + esc(l[k] || "") + "</textarea></div>";
+    let n = 0;
+    const passo = (rotulo, k, dica, alvo, alt) => {
+      n++;
+      const v = alvo === "col" ? l[k] : k.split(".").reduce((o, p) => (o || {})[p], f);
+      const attr = alvo === "col" ? 'data-salvar-leitura="' + k + '"' : 'data-ficha="' + k + '"';
+      return '<div class="f passo"><label for="fx-' + k.replace(".", "-") + '"><span class="n">' + n + "</span>" + rotulo + salvo(k) + "</label>" +
+        '<textarea id="fx-' + k.replace(".", "-") + '" ' + attr + ' placeholder="' + esc(dica) + '" style="min-height:' + (alt || 110) + 'px">' + esc(v || "") + "</textarea></div>";
+    };
+    const conceitos = Array.isArray(f.conceitos) ? f.conceitos : [];
+    const relacionadas = (Array.isArray(f.relacionadas) ? f.relacionadas : []).map((id) => achar("leituras", id)).filter(Boolean);
+    const outras = S.leituras.filter((x) => x.id !== l.id && !relacionadas.includes(x)).sort((a, b) => String(a.titulo).localeCompare(b.titulo));
+    const temGrifos = cits.some((c) => c.origem === "grifo");
+    const aConferir = cits.filter((c) => c.origem === "grifo" && !c.conferida).length;
+
+    const fichamento = '<section class="panel"><div class="panel-h"><h2>Fichamento</h2><div class="actions">' +
+        '<button class="btn sm ghost" data-act="copiarFichamento" data-id="' + esc(l.id) + '" title="Copia tudo, com a referência, para colar no Word ou no Docs">' + icon.copy + "Copiar fichamento</button>" +
+        (l.status === "Fichado" ? '<span class="pill ok">fichado</span>' : '<button class="btn sm" data-act="marcarFichado" data-id="' + esc(l.id) + '">Marcar como fichado</button>') + "</div></div>" +
+      '<p class="hint" style="margin:-4px 0 14px">Escreva com as suas palavras, sem olhar o texto. O que você consegue explicar sozinho(a) é o que entendeu. As citações ficam mais abaixo, como apoio.</p>' +
+      '<div class="form">' +
+        passo("A tese em uma frase", "tese", "Se tivesse que explicar o texto em uma frase, qual seria?", "ficha", 60) +
+        passo("Como o autor chega lá", "ideias", "O caminho do argumento: premissas, etapas, exemplos e conclusões. Paráfrase, não cópia.", "col", 140) +
+        (ehJuris(l) ? '<div class="firac"><div class="label">Estudo do caso (FIRAC)</div>' + FIRAC.map(([k, rot, dica]) => '<div class="f"><label for="fx-firac-' + k + '">' + rot + salvo("firac." + k) + '</label><textarea id="fx-firac-' + k + '" data-ficha="firac.' + k + '" placeholder="' + esc(dica) + '" style="min-height:70px">' + esc((f.firac || {})[k] || "") + "</textarea></div>").join("") + "</div>" : "") +
+        (n++, '<div class="f passo"><label><span class="n">' + n + '</span>Conceitos-chave</label><span class="hint">Os termos que o texto usa ou cria, definidos por você.</span>' +
+          '<div class="stack" style="gap:8px;margin-top:4px">' + conceitos.map((c, i) => '<div class="conceito"><input type="text" id="cc-t' + i + '" data-conceito="' + i + '" data-k="termo" placeholder="Termo" value="' + esc(c.termo || "") + '" aria-label="Termo"><textarea id="cc-d' + i + '" data-conceito="' + i + '" data-k="definicao" placeholder="O que significa, com suas palavras" aria-label="Definição" style="min-height:42px">' + esc(c.definicao || "") + '</textarea><button class="btn sm ghost" data-act="rmConceito" data-id="' + esc(l.id) + '" data-i="' + i + '" aria-label="Remover conceito">✕</button></div>').join("") +
+          '<div><button class="btn sm" data-act="addConceito" data-id="' + esc(l.id) + '">+ Conceito</button></div></div></div>') +
+        passo("Minha posição", "critica", "Concordo? Onde o argumento é forte, onde falha, o que ficou de fora?", "col", 110) +
+        passo("Perguntas que o texto deixa", "perguntas", "Dúvidas, pontos a pesquisar, perguntas para a aula ou para a orientação.", "ficha", 80) +
+        (n++, '<div class="f passo"><label for="fx-conexao"><span class="n">' + n + "</span>Conexões" + salvo("conexao") + "</label>" +
+          '<textarea id="fx-conexao" data-salvar-leitura="conexao" placeholder="Com que outros textos conversa? Onde entra na disciplina ou na ' + esc(trab()) + '?" style="min-height:80px">' + esc(l.conexao || "") + "</textarea>" +
+          '<div class="chips" style="margin-top:6px;align-items:center">' + relacionadas.map((x) => '<span class="chip rel"><span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(x.id) + '">' + esc(x.titulo) + '</span><button class="x" data-act="rmRelacionada" data-id="' + esc(l.id) + '" data-rel="' + esc(x.id) + '" aria-label="Remover relação">✕</button></span>').join("") +
+          (outras.length ? '<select id="fx-rel" data-relacionar="' + esc(l.id) + '" style="width:auto;max-width:280px"><option value="">+ Relacionar com outro texto</option>' + outras.map((x) => '<option value="' + esc(x.id) + '">' + esc(x.titulo) + "</option>").join("") + "</select>" : "") + "</div></div>") +
+        '<p class="hint">Tudo é salvo sozinho quando você sai do campo.</p></div></section>';
+
+    const ideiasHTML = '<section class="panel"><div class="panel-h"><h2>Minhas ideias</h2><span class="xs muted">' + plural(ids.length, "ideia", "ideias") + "</span></div>" +
+      '<p class="hint" style="margin:-4px 0 12px">Uma ideia por cartão: um insight, um argumento seu, algo que você vai usar. Ligue às citações que a sustentam. Todas ficam reunidas em Ideias, no menu.</p>' +
+      (ids.length ? '<div class="stack" style="gap:10px;margin-bottom:12px">' + ids.map((i) => cartaoIdeia(i)).join("") + "</div>" : "") +
+      '<div class="nova-ideia"><textarea id="ideia-txt" placeholder="Nova ideia, com as suas palavras" aria-label="Nova ideia" style="min-height:60px"></textarea>' +
+        (cits.length ? '<details class="mais"><summary>Apoiar em citações deste texto</summary><div class="list" style="margin-top:6px">' + cits.map((c) => '<label class="row" style="cursor:pointer;align-items:flex-start"><input type="checkbox" class="ideia-cit" value="' + esc(c.id) + '"><span class="grow small">“' + esc(String(c.trecho || "").slice(0, 160)) + (String(c.trecho || "").length > 160 ? "…" : "") + '” <span class="mono muted">' + esc(paginaCit(c, l) ? "p. " + paginaCit(c, l) : "") + "</span></span></label>").join("") + "</div></details>" : "") +
+        '<div><button class="btn sm primary" data-act="novaIdeia" data-id="' + esc(l.id) + '">Guardar ideia</button></div></div></section>';
+
+    const citacoesHTML = '<section class="panel"><div class="panel-h"><h2>Citações</h2><div class="actions">' + (aConferir ? '<span class="pill warn">' + plural(aConferir, "página a conferir", "páginas a conferir") + "</span>" : "") +
+        '<button class="btn sm" data-act="importarGrifos" data-id="' + esc(l.id) + '" title="Escolha o PDF em que você grifou">' + icon.up + "Importar grifos do PDF</button></div></div>" +
+      (cits.length ? "" : '<p class="small muted" style="margin-bottom:10px">Grife o PDF no leitor que você usa (Adobe, Edge, Preview, Foxit, Drawboard, Xodo…), salve e clique em Importar grifos. Cada trecho grifado vira uma citação com a página. Grifos com nota trazem a nota como comentário.</p>') +
+      (temGrifos ? '<div class="deslocamento small"><label for="fx-desl">A página 1 do PDF é a página impressa</label><input type="number" id="fx-desl" data-deslocamento="' + esc(l.id) + '" value="' + (1 + (Number(l.deslocamento_pagina) || 0)) + '" style="width:80px"><span class="hint">Em artigos e capítulos, a numeração impressa raramente começa em 1. Ajuste uma vez e todas as páginas se corrigem.</span></div>' : "") +
+      (cits.length ? '<div class="stack" style="gap:16px;margin:10px 0">' + cits.map((c) => blocoCitacao(c, l)).join("") + "</div>" : "") +
+      '<details class="mais"><summary>Adicionar trecho à mão</summary><div class="stack" style="gap:8px;background:var(--surface-2);padding:12px;border-radius:8px;margin-top:8px"><div class="two" style="grid-template-columns:110px 1fr"><input type="text" id="cit-pag" placeholder="Página" aria-label="Página"><input type="text" id="cit-com" placeholder="O que isso significa para você (opcional)" aria-label="Comentário"></div>' +
+        '<textarea id="cit-trecho" placeholder="Trecho exatamente como está no original" aria-label="Trecho" style="min-height:70px"></textarea><div><button class="btn sm primary" data-act="addCitacao" data-id="' + esc(l.id) + '">Adicionar citação</button></div></div></details></section>';
+
     return voltar +
       '<div class="head"><div style="min-width:0"><span class="label">' + esc([l.tipo_obra, destNome(l)].filter(Boolean).join(" · ") || "Leitura") + '</span><h1 style="margin-top:6px">' + esc(l.titulo) + '</h1><p class="sub">' + esc([l.autores, l.ano].filter(Boolean).join(" · ")) + "</p></div>" +
       '<div class="actions">' + (l.arquivo_path ? '<button class="btn primary" data-act="abrirArquivo" data-path="' + esc(l.arquivo_path) + '">' + icon.file + "Abrir texto</button>" : '<button class="btn" data-act="anexarLeitura" data-id="' + esc(l.id) + '">' + icon.up + "Anexar arquivo</button>") +
       '<button class="btn" data-act="editar" data-t="leituras" data-id="' + esc(l.id) + '">Editar dados</button></div></div>' +
-      '<div class="cols"><div class="stack">' +
-        '<section class="panel"><div class="panel-h"><h2>Fichamento</h2>' + (l.status === "Fichado" ? '<span class="pill ok">fichado</span>' : '<button class="btn sm" data-act="marcarFichado" data-id="' + esc(l.id) + '">Marcar como fichado</button>') + '</div><div class="form">' +
-          campo("ideias", "Ideias centrais", "A tese do texto e os argumentos principais, com suas palavras.") +
-          '<div class="f"><label>Citações diretas</label>' +
-            (cits.length ? '<div class="stack" style="gap:14px;margin:4px 0 10px">' + cits.map((c) => '<div class="quote"><div class="q">“' + esc(c.trecho) + '”</div><div class="m">' + (c.pagina ? '<span class="mono">p. ' + esc(c.pagina) + "</span>" : '<span style="color:var(--warn)">sem página</span>') + (c.comentario ? "<span>" + esc(c.comentario) + "</span>" : "") +
-              '<span style="flex:1"></span><button class="btn sm ghost" data-act="copiarCitacao" data-id="' + esc(c.id) + '">' + icon.copy + 'Copiar</button><button class="btn sm ghost" data-act="editar" data-t="citacoes" data-id="' + esc(c.id) + '">Editar</button></div></div>').join("") + "</div>" : "") +
-            '<div class="stack" style="gap:8px;background:var(--surface-2);padding:12px;border-radius:8px"><div class="two" style="grid-template-columns:110px 1fr"><input type="text" id="cit-pag" placeholder="Página" aria-label="Página"><input type="text" id="cit-com" placeholder="Comentário (opcional)" aria-label="Comentário"></div>' +
-            '<textarea id="cit-trecho" placeholder="Trecho exatamente como está no original" aria-label="Trecho" style="min-height:70px"></textarea><div><button class="btn sm primary" data-act="addCitacao" data-id="' + esc(l.id) + '">Adicionar citação</button></div></div></div>' +
-          campo("critica", "Análise crítica", "Concordâncias, objeções, lacunas do argumento.") +
-          campo("conexao", "Conexão com a disciplina ou a " + trab(), "Onde e como este texto será usado.") +
-        '<p class="hint">Os campos são salvos sozinhos quando você sai deles.</p></div></section>' +
+      '<div class="cols"><div class="stack">' + fichamento + ideiasHTML + citacoesHTML +
       '</div><div class="stack">' +
         '<section class="panel"><div class="panel-h"><h2>Progresso</h2>' + statusPill(l.status) + "</div>" +
           '<div class="two"><div class="f"><label for="pg-lidas">Já li até a página</label><input type="number" min="0" id="pg-lidas" data-pagina="' + esc(l.id) + '" value="' + (l.paginas_lidas || 0) + '"></div>' +
@@ -498,6 +607,7 @@
           '<div class="f"><label for="pg-prazo">Ler até</label><input type="date" id="pg-prazo" data-prazo="' + esc(l.id) + '" value="' + esc(l.prazo || "") + '"></div>' +
           (l.disciplina_id && disc(l.disciplina_id) && proxAula(disc(l.disciplina_id)) && l.prazo !== proxAula(disc(l.disciplina_id)) ? '<button class="btn sm ghost" style="margin-top:6px" data-act="prazoProxAula" data-id="' + esc(l.id) + '">Usar a próxima aula (' + esc(fmtD(proxAula(disc(l.disciplina_id)))) + ")</button>" : "") +
           (r.porDia ? '<div class="pace" style="margin-top:12px"><span class="big">' + r.porDia + '</span><span class="small">páginas por dia para terminar ' + (r.dias > 0 ? "até " + esc(fmtDia(l.prazo)) + " (" + plural(r.dias, "dia", "dias") + ")" : "hoje") + "</span></div>" : "") +
+          '<div class="xs muted" style="margin-top:12px">Fichamento: ' + contarFicha(l) + " de 6 partes preenchidas · " + plural(cits.length, "citação", "citações") + "</div>" +
           "</section>" +
         '<section class="panel"><div class="panel-h"><h2>Referência</h2>' + (l.referencia ? (l.referencia_conferida ? '<span class="pill ok">conferida</span>' : '<span class="pill warn">gerada automaticamente</span>') : "") + "</div>" +
           (l.referencia ? '<div class="ref-box">' + N.refHTML(l.referencia) + "</div>" +
@@ -512,23 +622,97 @@
       "</div></div>";
   }
 
-  // ---------------------------- CITAÇÕES ------------------------------------
-  function vCitacoes() {
+  // Fichamento inteiro, para colar no Word ou no Google Docs.
+  function fichamentoExport(l) {
+    const f = ficha(l), secs = [];
+    const add = (t, v) => { if (v && String(v).trim()) secs.push([t, String(v).trim()]); };
+    add("Tese", f.tese);
+    add("Como o autor chega lá", l.ideias);
+    if (ehJuris(l)) FIRAC.forEach(([k, rot]) => add(rot, (f.firac || {})[k]));
+    add("Conceitos-chave", (Array.isArray(f.conceitos) ? f.conceitos : []).filter((c) => c.termo || c.definicao).map((c) => "• " + (c.termo || "") + (c.definicao ? ": " + c.definicao : "")).join("\n"));
+    add("Minha posição", l.critica);
+    add("Perguntas", f.perguntas);
+    const rel = (Array.isArray(f.relacionadas) ? f.relacionadas : []).map((id) => achar("leituras", id)).filter(Boolean).map((x) => "• " + x.titulo + (x.autores ? " (" + x.autores.split(";")[0].split(",")[0].trim() + (x.ano ? ", " + x.ano : "") + ")" : ""));
+    add("Conexões", [l.conexao].concat(rel).filter(Boolean).join("\n"));
+    const ids = ideiasDe(l), cits = citsDe(l);
+    let txt = (l.referencia ? N.refTexto(l.referencia) : l.titulo) + "\n";
+    let html = "<p>" + (l.referencia ? N.refHTML(l.referencia) : "<b>" + esc(l.titulo) + "</b>") + "</p>";
+    const blocoH = (t) => "<p><b>" + esc(t) + "</b></p>";
+    const par = (v) => String(v).split("\n").map((x) => "<p>" + esc(x) + "</p>").join("");
+    secs.forEach(([t, v]) => { txt += "\n" + t.toUpperCase() + "\n" + v + "\n"; html += blocoH(t) + par(v); });
+    if (ids.length) {
+      txt += "\nMINHAS IDEIAS\n"; html += blocoH("Minhas ideias");
+      ids.forEach((i) => {
+        txt += "• " + i.texto + "\n"; html += "<p>• " + esc(i.texto) + "</p>";
+        (i.citacoes || []).map((id) => achar("citacoes", id)).filter(Boolean).forEach((c) => { const fc = formatarCitacao(c, l); txt += "    " + fc.txt + "\n"; html += fc.longa ? fc.html : '<p style="margin-left:1cm">' + fc.html + "</p>"; });
+      });
+    }
+    if (cits.length) {
+      txt += "\nCITAÇÕES\n"; html += blocoH("Citações");
+      cits.forEach((c) => { const fc = formatarCitacao(c, l); txt += fc.txt + (c.comentario ? "\n    → " + c.comentario : "") + "\n"; html += (fc.longa ? fc.html : "<p>" + fc.html + "</p>") + (c.comentario ? '<p style="margin-left:1cm"><i>' + esc(c.comentario) + "</i></p>" : ""); });
+    }
+    return { txt, html };
+  }
+
+  // ---------------------------- IDEIAS --------------------------------------
+  function vIdeias() {
+    const aba = UI.ideiasAba === "citacoes" ? "citacoes" : "ideias";
+    const abas = '<div class="toolbar"><div class="chips">' +
+      [["ideias", "Minhas ideias (" + S.ideias.length + ")"], ["citacoes", "Citações (" + S.citacoes.length + ")"]].map(([k, t]) => '<button class="chip" data-act="filtro" data-k="ideiasAba" data-v="' + k + '" aria-pressed="' + (aba === k) + '">' + t + "</button>").join("") + "</div></div>";
+    const head = '<div class="head"><div><h1>Ideias</h1><p class="sub">O que você pensou a partir das leituras, e as citações que sustentam cada ideia.</p></div></div>';
+    if (aba === "citacoes") return head + abas + vCitacoesLista();
+    const q = UI.ideiaQ.trim().toLowerCase();
+    let is = S.ideias.map((i) => ({ i, l: i.leitura_id ? achar("leituras", i.leitura_id) : null }));
+    is = is.filter((x) => !UI.citDest || (x.l && casaDestino(x.l, UI.citDest)));
+    if (q) is = is.filter((x) => [x.i.texto, x.i.tags, x.l && x.l.titulo, x.l && x.l.autores].join(" ").toLowerCase().includes(q));
+    is.sort((a, b) => String(b.i.updated_at || b.i.created_at).localeCompare(String(a.i.updated_at || a.i.created_at)));
+    return head + abas +
+      '<div class="toolbar"><input type="search" class="search" id="ideia-q" data-input="ideiaQ" placeholder="Buscar nas ideias, por palavra, tema ou obra" value="' + esc(UI.ideiaQ) + '">' +
+      '<select id="cit-dest" data-change="citDest" style="width:auto;max-width:260px"><option value="">Todas as disciplinas</option>' + opcoesDestino(UI.citDest) + "</select>" +
+      '<span class="small muted">' + plural(is.length, "ideia", "ideias") + "</span></div>" +
+      '<section class="panel" style="margin-bottom:14px"><div class="nova-ideia"><textarea id="ideia-livre" placeholder="Uma ideia que não vem de um texto só? Anote aqui." aria-label="Nova ideia livre" style="min-height:56px"></textarea><div><button class="btn sm primary" data-act="novaIdeia">Guardar ideia</button></div></div></section>' +
+      (is.length ? '<div class="stack" style="gap:10px">' + is.map(({ i }) => cartaoIdeia(i, { obra: true })).join("") + "</div>"
+        : empty(S.ideias.length ? "Nenhuma ideia encontrada." : "As ideias que você guardar nos fichamentos aparecem aqui, pesquisáveis."));
+  }
+
+  function vCitacoesLista() {
     const q = UI.citQ.trim().toLowerCase();
     let cs = S.citacoes.map((c) => ({ c, l: achar("leituras", c.leitura_id) })).filter((x) => x.l);
     cs = cs.filter((x) => casaDestino(x.l, UI.citDest));
-    if (q) cs = cs.filter((x) => [x.c.trecho, x.c.comentario, x.l.titulo, x.l.autores, x.l.tags].join(" ").toLowerCase().includes(q));
-    cs.sort((a, b) => String(a.l.titulo).localeCompare(b.l.titulo) || (parseInt(a.c.pagina, 10) || 0) - (parseInt(b.c.pagina, 10) || 0));
-    return '<div class="head"><div><h1>Citações</h1><p class="sub">Todas as citações diretas dos seus fichamentos, pesquisáveis em um só lugar.</p></div></div>' +
-      '<div class="toolbar"><input type="search" class="search" id="cit-q" data-input="citQ" placeholder="Buscar por palavra, autor ou obra" value="' + esc(UI.citQ) + '">' +
+    if (q) cs = cs.filter((x) => [x.c.trecho, x.c.traducao, x.c.comentario, x.l.titulo, x.l.autores, x.l.tags].join(" ").toLowerCase().includes(q));
+    cs.sort((a, b) => String(a.l.titulo).localeCompare(b.l.titulo) || ordemPag(a.l)(a.c, b.c));
+    return '<div class="toolbar"><input type="search" class="search" id="cit-q" data-input="citQ" placeholder="Buscar por palavra, autor ou obra" value="' + esc(UI.citQ) + '">' +
       '<select id="cit-dest" data-change="citDest" style="width:auto;max-width:260px"><option value="">Todas as disciplinas</option>' + opcoesDestino(UI.citDest) + "</select>" +
       '<span class="small muted">' + plural(cs.length, "citação", "citações") + "</span></div>" +
-      (cs.length ? '<section class="panel"><div class="stack" style="gap:20px">' + cs.map(({ c, l }) => '<div class="quote"><div class="q">“' + esc(c.trecho) + '”</div><div class="m">' +
-        '<span class="clickable" data-act="nav" data-v="leitura" data-id="' + esc(l.id) + '"><b class="t">' + esc(l.titulo) + "</b></span>" + (l.autores ? "<span>" + esc(l.autores.split(";")[0]) + "</span>" : "") +
-        (c.pagina ? '<span class="mono">p. ' + esc(c.pagina) + "</span>" : '<span style="color:var(--warn)">sem página</span>') + destTag(l) +
-        '<span style="flex:1"></span><button class="btn sm ghost" data-act="copiarCitacao" data-id="' + esc(c.id) + '">' + icon.copy + "Copiar</button></div>" +
-        (c.comentario ? '<div class="small muted">' + esc(c.comentario) + "</div>" : "") + "</div>").join("") + "</div></section>"
-        : empty(S.citacoes.length ? "Nenhuma citação encontrada." : "As citações que você registrar nos fichamentos aparecem aqui."));
+      (cs.length ? '<section class="panel"><div class="stack" style="gap:20px">' + cs.map(({ c, l }) => blocoCitacao(c, l, { obra: true })).join("") + "</div></section>"
+        : empty(S.citacoes.length ? "Nenhuma citação encontrada." : "As citações entram aqui quando você importa os grifos de um PDF ou adiciona um trecho no fichamento."));
+  }
+  const vCitacoes = () => { UI.ideiasAba = "citacoes"; return vIdeias(); };
+
+  // Modal para escolher as citações que sustentam uma ideia.
+  function abrirVinculo(id) {
+    const i = achar("ideias", id); if (!i) return;
+    const l = i.leitura_id ? achar("leituras", i.leitura_id) : null;
+    const lista = (l ? citsDe(l) : S.citacoes.slice()).map((c) => ({ c, l: achar("leituras", c.leitura_id) })).filter((x) => x.l);
+    const marc = new Set(i.citacoes || []);
+    abrirModal('<form class="form" id="form-vinculo"><div><h2>Citações que sustentam a ideia</h2><p class="small muted" style="margin-top:4px">' + esc(String(i.texto).slice(0, 160)) + "</p></div>" +
+      (lista.length ? '<div class="list" style="max-height:52vh;overflow:auto">' + lista.map(({ c, l: lc }) => '<label class="row" style="cursor:pointer;align-items:flex-start"><input type="checkbox" value="' + esc(c.id) + '"' + (marc.has(c.id) ? " checked" : "") + '><span class="grow small">“' + esc(String(c.trecho || "").slice(0, 220)) + (String(c.trecho || "").length > 220 ? "…" : "") + '” <span class="mono muted">' + esc(chamada(c, lc)) + "</span></span></label>").join("") + "</div>"
+        : '<p class="small muted">' + (l ? "Este texto ainda não tem citações. Importe os grifos do PDF primeiro." : "Ainda não há citações no hub.") + "</p>") +
+      '<div class="actions"><span class="sp"></span><button type="button" class="btn ghost" data-act="fecharModal">Cancelar</button><button class="btn primary">Salvar</button></div></form>');
+    $("#form-vinculo").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const v = $$("#form-vinculo input[type=checkbox]:checked").map((x) => x.value);
+      fecharModal(); await alterar("ideias", id, { citacoes: v });
+    });
+  }
+
+  // Altera uma parte do roteiro do fichamento (coluna jsonb "ficha").
+  function salvarFicha(id, mudar, chave) {
+    const l = achar("leituras", id); if (!l) return;
+    const f = JSON.parse(JSON.stringify(ficha(l)));
+    if (mudar(f) === false) return;
+    if (chave) UI.salvoCampo = id + chave;
+    alterar("leituras", id, { ficha: f }).then(() => setTimeout(() => { if (chave && UI.salvoCampo === id + chave) { UI.salvoCampo = null; const s = $(".saved"); if (s) s.remove(); } }, 2000));
   }
 
   // ---------------------------- TAREFAS -------------------------------------
@@ -654,7 +838,7 @@
     return '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Horas estudadas nas últimas 8 semanas">' + g + "</svg>";
   }
 
-  const VIEWS = { inicio: vInicio, disciplinas: vDisciplinas, disciplina: vDisciplina, leituras: vLeituras, leitura: vLeitura, citacoes: vCitacoes, tarefas: vTarefas, dissertacao: vDissertacao, rotina: vRotina };
+  const VIEWS = { inicio: vInicio, disciplinas: vDisciplinas, disciplina: vDisciplina, leituras: vLeituras, leitura: vLeitura, citacoes: vCitacoes, ideias: vIdeias, tarefas: vTarefas, dissertacao: vDissertacao, rotina: vRotina };
 
   // --------------------------------------------------------------------------
   // Pomodoro: foco, pausa curta e pausa longa.
@@ -820,9 +1004,13 @@
       ["notas", "Detalhes", "textarea"],
       ["concluida", "Concluída", "check"]] },
     citacoes: { n: "citação", g: "a", campos: [
-      ["pagina", "Página", "text", { ph: "45 ou 45-46" }],
-      ["trecho", "Trecho", "textarea", { req: 1 }],
-      ["comentario", "Comentário", "textarea"]] },
+      ["pagina", "Página impressa", "text", { ph: "45 ou 45-46", dica: "A página da obra, que vai na chamada. Se ficar em branco, o hub usa a página do PDF com o ajuste da leitura." }],
+      ["trecho", "Trecho, exatamente como no original", "textarea", { req: 1 }],
+      ["traducao", "Tradução sua (opcional)", "textarea", { dica: "Se preencher, a citação é copiada traduzida, com “tradução nossa” na chamada." }],
+      ["comentario", "O que isso significa para você", "textarea"]] },
+    ideias: { n: "ideia", g: "a", campos: [
+      ["texto", "Ideia", "textarea", { req: 1 }],
+      ["tags", "Temas", "text", { ph: "confiança, boa-fé", dica: "Ajuda a achar ideias parecidas de textos diferentes." }]] },
     capitulos: { n: "capítulo", g: "o", campos: [
       [["ordem", "Ordem", "number"], ["status", "Situação", "select", { opts: STATUS_CAP.map((s) => [s, s]) }]],
       ["titulo", "Título", "text", { req: 1 }],
@@ -896,6 +1084,7 @@
         else { const v = el.value.trim(); row[k] = v === "" ? null : v; }
       });
       if (pre) ["leitura_id"].forEach((k) => { if (pre[k] && !atual) row[k] = pre[k]; });
+      if (t === "citacoes" && atual && (row.pagina || null) !== (atual.pagina || null)) row.conferida = true;
       if (t === "tarefas") row.concluida_em = row.concluida ? (atual && atual.concluida_em) || HOJE() : null;
       if (t === "leituras") {
         if (row.paginas_total && (atual ? atual.paginas_lidas : 0) > row.paginas_total) row.paginas_lidas = row.paginas_total;
@@ -994,7 +1183,74 @@
   // --------------------------------------------------------------------------
   if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
 
-  async function analisarPDF(file) {
+  // Grifos: lê as marcações (realce, sublinhado, ondulado) de todas as páginas
+  // e recupera o texto marcado pela posição na página.
+  const TIPOS_GRIFO = ["Highlight", "Underline", "Squiggly"];
+  async function lerGrifos(pdf) {
+    const out = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      let pg, anots;
+      try { pg = await pdf.getPage(i); anots = await pg.getAnnotations(); } catch (e) { continue; }
+      const gs = (anots || []).filter((a) => TIPOS_GRIFO.includes(a.subtype));
+      if (!gs.length) continue;
+      let itens = [];
+      try { itens = (await pg.getTextContent()).items || []; } catch (e) { itens = []; }
+      gs.forEach((a) => {
+        const nota = String((a.contentsObj && a.contentsObj.str) || a.contents || "").trim();
+        let trecho = N.textoDoGrifo(itens, N.retangulosDoGrifo(a.quadPoints, a.rect));
+        let comentario = nota || null;
+        if (!trecho && nota) { trecho = nota; comentario = null; }
+        const topo = a.rect ? Math.max(a.rect[1], a.rect[3]) : 0;
+        out.push({ pagina_pdf: i, trecho, comentario, _topo: topo });
+      });
+    }
+    // na ordem da leitura: página, depois de cima para baixo
+    return out.sort((a, b) => a.pagina_pdf - b.pagina_pdf || b._topo - a._topo).map(({ _topo, ...g }) => g);
+  }
+  const chaveGrifo = (c) => (c.pagina_pdf || "") + "|" + String(c.trecho || "").toLowerCase().replace(/[^a-z0-9à-ÿ]/g, "").slice(0, 60);
+  // Cria as citações novas de uma leitura, sem repetir as que já existem.
+  async function gravarGrifos(leitura, grifos) {
+    const ja = new Set(S.citacoes.filter((c) => c.leitura_id === leitura.id).map(chaveGrifo));
+    const novos = grifos.filter((g) => g.trecho && !ja.has(chaveGrifo(g)))
+      .map((g) => ({ leitura_id: leitura.id, pagina_pdf: g.pagina_pdf, pagina: null, trecho: g.trecho, comentario: g.comentario, origem: "grifo", conferida: false }));
+    if (!novos.length) return { novos: 0, semTexto: grifos.filter((g) => !g.trecho).length };
+    const rs = await api.inserirVarios("citacoes", novos);
+    S.citacoes.push(...rs); render();
+    return { novos: rs.length, semTexto: grifos.filter((g) => !g.trecho).length };
+  }
+  const resumoGrifos = (r, total) => {
+    if (!total) return "nenhum grifo encontrado no PDF";
+    let s = r.novos ? plural(r.novos, "citação importada dos grifos", "citações importadas dos grifos") : "os grifos já estavam importados";
+    if (r.semTexto) s += " (" + plural(r.semTexto, "grifo sem texto legível", "grifos sem texto legível") + ")";
+    return s;
+  };
+
+  async function importarGrifos(id, f) {
+    const l = achar("leituras", id); if (!l) return;
+    if (!ehPDF(f)) { toast("Os grifos só podem ser lidos de um PDF."); return; }
+    try {
+      toast("Lendo os grifos de " + f.name + "…", 30000);
+      const info = await analisarPDF(f, true);
+      const grifos = info.grifos || [];
+      if (!grifos.length) {
+        toast("Não encontrei grifos neste PDF. Confira se o grifo foi salvo no arquivo (no leitor, use Salvar depois de grifar).", 8000);
+        return;
+      }
+      const r = await gravarGrifos(l, grifos);
+      // guarda a versão grifada no lugar da anterior, para abrir já com os grifos
+      try {
+        const antigo = l.arquivo_path;
+        const path = await api.enviar(f, "leituras");
+        const patch = { arquivo_path: path, arquivo_nome: f.name, arquivo_tamanho: f.size };
+        if (info.paginas && !l.paginas_total) patch.paginas_total = info.paginas;
+        await alterar("leituras", id, patch);
+        if (antigo && antigo !== path) { try { await api.apagarArquivo(antigo); } catch (e) { console.warn(e); } }
+      } catch (e) { console.warn(e); }
+      toast(resumoGrifos(r, grifos.length).replace(/^./, (c) => c.toUpperCase()) + ". Confira as páginas.", 7000);
+    } catch (e) { falha(e); }
+  }
+
+  async function analisarPDF(file, comGrifos) {
     const out = {};
     if (!window.pdfjsLib) return out;
     const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -1012,6 +1268,7 @@
     out.doi = N.acharDOI(texto);
     out.isbn = N.acharISBN(texto);
     out.semTexto = texto.replace(/\s/g, "").length < 40;
+    if (comGrifos) { try { out.grifos = await lerGrifos(pdf); } catch (e) { out.grifos = []; } }
     try { pdf.destroy(); } catch (e) { /* ok */ }
     return out;
   }
@@ -1049,7 +1306,7 @@
     const dest = destino !== undefined ? destino : rota.v === "disciplina" ? rota.id : rota.v === "dissertacao" ? "diss" : "";
     const d = dest && dest !== "diss" ? disc(dest) : null;
     const prazo = d ? proxAula(d) || "" : "";
-    abrirModal('<div class="form" id="deposito"><div><h2>Depositar textos</h2><p class="small muted" style="margin-top:4px">Para cada PDF, o hub conta as páginas, procura DOI ou ISBN nas primeiras páginas, busca os dados da obra e monta a referência ABNT. Depois é só conferir.</p></div>' +
+    abrirModal('<div class="form" id="deposito"><div><h2>Depositar textos</h2><p class="small muted" style="margin-top:4px">Para cada PDF, o hub conta as páginas, procura DOI ou ISBN, busca os dados da obra, monta a referência ABNT e transforma os grifos em citações. Depois é só conferir.</p></div>' +
       '<div class="two"><div class="f"><label for="dp-dest">Para</label><select id="dp-dest"><option value="">Nenhuma disciplina</option>' + opcoesDestino(dest) + "</select></div>" +
       '<div class="f"><label for="dp-prazo">Ler até</label><input type="date" id="dp-prazo" value="' + esc(prazo) + '"><span class="hint" id="dp-prazo-dica">' + (prazo ? "Próxima aula da disciplina, calculada pelo dia da semana." : "Opcional.") + "</span></div></div>" +
       '<div class="drop" id="dp-drop" data-act="escolherArquivos"><b>Escolher arquivos</b><span class="small muted">ou arraste aqui. PDF, Word, ODT, EPUB, até 50 MB cada.</span></div>' +
@@ -1073,7 +1330,21 @@
       try {
         if (f.size > 52428800) { msg("Maior que 50 MB. Não enviado.", "var(--danger)"); continue; }
         let info = {}, obra = null, notas = [];
-        if (ehPDF(f)) { msg("Lendo o PDF…"); try { info = await analisarPDF(f); } catch (e) { notas.push("não consegui ler o PDF"); } }
+        if (ehPDF(f)) { msg("Lendo o PDF…"); try { info = await analisarPDF(f, true); } catch (e) { notas.push("não consegui ler o PDF"); } }
+        // Mesmo arquivo de uma leitura que já existe: só atualiza os grifos.
+        const existente = S.leituras.find((x) => x.arquivo_nome && x.arquivo_nome === f.name);
+        if (existente && info.grifos && info.grifos.length) {
+          msg("Já está na biblioteca. Atualizando os grifos…");
+          const rg = await gravarGrifos(existente, info.grifos);
+          try {
+            const antigo = existente.arquivo_path, path = await api.enviar(f, "leituras");
+            await alterar("leituras", existente.id, { arquivo_path: path, arquivo_tamanho: f.size });
+            if (antigo && antigo !== path) { try { await api.apagarArquivo(antigo); } catch (e) { console.warn(e); } }
+          } catch (e) { console.warn(e); }
+          feitos.push(existente);
+          msg("✓ já estava na biblioteca · " + esc(resumoGrifos(rg, info.grifos.length)) + ' · <a href="#" data-act="abrirDepositado" data-id="' + esc(existente.id) + '">abrir</a>', "var(--ok)");
+          continue;
+        }
         if (info.doi) { msg("DOI encontrado (" + esc(info.doi) + "). Buscando dados na Crossref…"); try { obra = await buscarDOI(info.doi); } catch (e) { notas.push("DOI encontrado, mas a busca falhou"); } }
         if (!obra && info.isbn) { msg("ISBN encontrado. Buscando dados…"); try { obra = await buscarISBN(info.isbn); } catch (e) { notas.push("ISBN encontrado, mas a busca falhou"); } }
         msg("Enviando o arquivo…");
@@ -1089,9 +1360,12 @@
         const r = await criar("leituras", row);
         if (!r) { msg("Arquivo enviado, mas o cadastro falhou.", "var(--danger)"); continue; }
         feitos.push(r);
+        let rg = null;
+        if (info.grifos && info.grifos.length) { try { rg = await gravarGrifos(r, info.grifos); } catch (e) { notas.push("não consegui importar os grifos"); } }
         const partes = [];
         if (info.paginas) partes.push(plural(info.paginas, "página", "páginas"));
         partes.push(obra ? "dados da obra preenchidos, referência montada (confira)" : "sem DOI ou ISBN no texto: complete os dados");
+        if (rg) partes.push(resumoGrifos(rg, info.grifos.length));
         if (info.semTexto) partes.push("o PDF parece ser imagem escaneada");
         msg("✓ " + partes.concat(notas).map(esc).join(" · ") + ' · <a href="#" data-act="abrirDepositado" data-id="' + esc(r.id) + '">abrir</a>', "var(--ok)");
       } catch (e) { msg(esc(msgErro(e)), "var(--danger)"); }
@@ -1116,7 +1390,8 @@
   function escolherArquivos(modo) {
     modoPicker = modo;
     const p = $("#file-picker"); p.value = "";
-    p.accept = ".pdf,.doc,.docx,.odt,.epub,.ppt,.pptx";
+    p.accept = modo.tipo === "grifos" ? ".pdf,application/pdf" : ".pdf,.doc,.docx,.odt,.epub,.ppt,.pptx";
+    p.multiple = modo.tipo !== "grifos" && modo.tipo !== "anexo";
     p.click();
   }
   $("#file-picker").addEventListener("change", (e) => {
@@ -1125,6 +1400,7 @@
     if (m.tipo === "deposito") { depositoArquivos = depositoArquivos.concat(fs); listarDeposito(); }
     else if (m.tipo === "material") enviarMaterial(m.dest, fs);
     else if (m.tipo === "anexo") anexarArquivo(m.id, fs[0]);
+    else if (m.tipo === "grifos") importarGrifos(m.id, fs[0]);
   });
   async function anexarArquivo(id, f) {
     try {
@@ -1173,7 +1449,7 @@
     loginVoltar: () => { loginEnviado = false; erroLogin = ""; render(); },
     sair: async () => { UI.menu = false; await api.sair(); },
     menu: () => { UI.menu = !UI.menu; render(); },
-    nav: (el) => ir(el.dataset.v, el.dataset.id),
+    nav: (el) => { if (el.dataset.v === "ideias") UI.ideiasAba = "ideias"; ir(el.dataset.v, el.dataset.id); },
     novo: (el) => {
       const pre = {};
       if (el.dataset.dest) pre.destino = el.dataset.dest;
@@ -1218,9 +1494,24 @@
     },
     copiarCitacao: (el) => {
       const c = achar("citacoes", el.dataset.id); const l = achar("leituras", c.leitura_id) || {};
-      const txt = "“" + c.trecho + "”" + (c.pagina ? " (p. " + c.pagina + ")" : "");
-      copiar(txt + (l.referencia ? "\n\n" + N.refTexto(l.referencia) : ""), esc(txt).replace(/\n/g, "<br>") + (l.referencia ? "<br><br>" + N.refHTML(l.referencia) : ""), "Citação copiada com a página e a referência.");
+      const fc = formatarCitacao(c, l);
+      copiar(fc.txt, fc.html, fc.longa ? "Citação longa copiada em bloco recuado (4 cm, fonte menor), com a chamada." : "Citação copiada entre aspas, com a chamada (autor, ano, página).");
     },
+    importarGrifos: (el) => escolherArquivos({ tipo: "grifos", id: el.dataset.id }),
+    conferirPagina: (el) => { const c = achar("citacoes", el.dataset.id); const l = achar("leituras", c.leitura_id) || {}; alterar("citacoes", c.id, { conferida: true, pagina: c.pagina || paginaCit(c, l) || null }); },
+    novaIdeia: async (el) => {
+      const lid = el.dataset.id || null;
+      const t = $(lid ? "#ideia-txt" : "#ideia-livre"); const texto = t ? t.value.trim() : "";
+      if (!texto) { toast("Escreva a ideia antes de guardar."); if (t) t.focus(); return; }
+      const cits = lid ? $$(".ideia-cit:checked").map((x) => x.value) : [];
+      const r = await criar("ideias", { leitura_id: lid, texto, citacoes: cits });
+      if (r) { toast("Ideia guardada."); const n = $(lid ? "#ideia-txt" : "#ideia-livre"); if (n) n.focus(); }
+    },
+    vincularCitacoes: (el) => abrirVinculo(el.dataset.id),
+    addConceito: (el) => salvarFicha(el.dataset.id, (f) => { f.conceitos = (Array.isArray(f.conceitos) ? f.conceitos : []).concat([{ termo: "", definicao: "" }]); }),
+    rmConceito: (el) => salvarFicha(el.dataset.id, (f) => { f.conceitos = (f.conceitos || []).filter((_, i) => i !== Number(el.dataset.i)); }),
+    rmRelacionada: (el) => salvarFicha(el.dataset.id, (f) => { f.relacionadas = (f.relacionadas || []).filter((x) => x !== el.dataset.rel); }),
+    copiarFichamento: (el) => { const l = achar("leituras", el.dataset.id); const x = fichamentoExport(l); copiar(x.txt, x.html, "Fichamento copiado. Cole no Word ou no Docs."); },
     copiarRef: (el) => { const l = achar("leituras", el.dataset.id); copiar(N.refTexto(l.referencia), N.refHTML(l.referencia), "Referência copiada. No Word, o negrito vai junto."); },
     buscarDados: async (el) => {
       const v = $("#busca-id").value.trim(); if (!v) { toast("Cole o DOI ou o ISBN."); return; }
@@ -1300,6 +1591,29 @@
       UI.salvoCampo = id + k;
       alterar("leituras", id, { [k]: v }).then(() => setTimeout(() => { if (UI.salvoCampo === id + k) { UI.salvoCampo = null; const s = $(".saved"); if (s) s.remove(); } }, 2000));
     }
+    if (el.dataset.ficha) {
+      const k = el.dataset.ficha, id = rota.id, v = el.value.trim() || null;
+      return salvarFicha(id, (f) => {
+        const partes = k.split("."); let o = f;
+        partes.slice(0, -1).forEach((p) => { if (!o[p] || typeof o[p] !== "object") o[p] = {}; o = o[p]; });
+        const ult = partes[partes.length - 1];
+        if ((o[ult] || null) === v) return false;
+        o[ult] = v;
+      }, k);
+    }
+    if (el.dataset.conceito != null) {
+      const i = Number(el.dataset.conceito), k = el.dataset.k, v = el.value.trim();
+      return salvarFicha(rota.id, (f) => { const cs = Array.isArray(f.conceitos) ? f.conceitos : (f.conceitos = []); if (!cs[i]) cs[i] = {}; if ((cs[i][k] || "") === v) return false; cs[i][k] = v; });
+    }
+    if (el.dataset.relacionar) { const v = el.value; if (!v) return; return salvarFicha(el.dataset.relacionar, (f) => { f.relacionadas = (Array.isArray(f.relacionadas) ? f.relacionadas : []).filter((x) => x !== v).concat([v]); }); }
+    if (el.dataset.deslocamento) { const n = Math.round(Number(el.value)); if (!el.value || !isFinite(n)) return; return alterar("leituras", el.dataset.deslocamento, { deslocamento_pagina: n - 1 }); }
+    if (el.dataset.citNota) { const c = achar("citacoes", el.dataset.citNota); const v = el.value.trim() || null; if (!c || (c.comentario || null) === v) return; return alterar("citacoes", c.id, { comentario: v }); }
+    if (el.dataset.ideia) {
+      const i = achar("ideias", el.dataset.ideia); const v = el.value.trim();
+      if (!i || i.texto === v) return;
+      if (!v) { el.value = i.texto; toast("Para apagar a ideia, use Editar e depois Excluir."); return; }
+      return alterar("ideias", i.id, { texto: v });
+    }
     if (el.id === "dp-dest") {
       const d = el.value && el.value !== "diss" ? disc(el.value) : null; const pa = d ? proxAula(d) : null;
       $("#dp-prazo").value = pa || ""; $("#dp-prazo-dica").textContent = pa ? "Próxima aula da disciplina, calculada pelo dia da semana." : "Opcional.";
@@ -1372,11 +1686,16 @@
     const l1 = L({ titulo: "Texto de exemplo sobre confiança contratual", autores: "AUTORA, Exemplo", ano: 2021, tipo_obra: "Artigo", disciplina_id: d2, prazo: N.proximaAula(disciplinas[1], H), paginas_total: 34, paginas_lidas: 12, status: "Lendo", referencia: "AUTORA, Exemplo. Texto de exemplo sobre confiança contratual. **Revista de Exemplo**, [S. l.], v. 1, n. 2, p. 10-43, 2021.", doi: "10.0000/exemplo.1" });
     const l2 = L({ titulo: "Livro de exemplo de teoria do direito", autores: "AUTOR, Exemplo", ano: 2019, tipo_obra: "Livro", idioma: "inglês", disciplina_id: d1, prazo: N.proximaAula(disciplinas[0], H), paginas_total: 60, paginas_lidas: 0, referencia: "AUTOR, Exemplo. **Livro de exemplo de teoria do direito**. Cidade: Editora Exemplo, 2019.", referencia_conferida: true });
     const l3 = L({ titulo: "Capítulo de exemplo sobre pesquisa empírica", autores: "PESQUISADORA, Exemplo", ano: 2020, tipo_obra: "Capítulo de livro", disciplina_id: d3, prazo: N.proximaAula(disciplinas[2], H), paginas_total: 28 });
-    const l4 = L({ titulo: "Artigo de exemplo para a dissertação", autores: "ESTUDIOSO, Exemplo; COLEGA, Exemplo", ano: 2022, tipo_obra: "Artigo", para_dissertacao: true, paginas_total: 22, paginas_lidas: 22, status: "Fichado", ideias: "Exemplo de ideia central registrada no fichamento.", critica: "Exemplo de análise crítica.", conexao: "Usar no capítulo 2.", referencia: "ESTUDIOSO, Exemplo; COLEGA, Exemplo. Artigo de exemplo para a dissertação. **Periódico de Exemplo**, [S. l.], v. 3, n. 1, p. 1-22, 2022.", referencia_conferida: true });
+    const l4 = L({ titulo: "Artigo de exemplo para a dissertação", autores: "ESTUDIOSO, Exemplo; COLEGA, Exemplo", ano: 2022, tipo_obra: "Artigo", para_dissertacao: true, paginas_total: 22, paginas_lidas: 22, status: "Fichado", ficha: { tese: "Exemplo: a tese do texto resumida em uma frase.", perguntas: "Exemplo: o argumento vale para contratos de adesão?", conceitos: [{ termo: "Conceito de exemplo", definicao: "Definição de exemplo, com as palavras de quem leu." }] }, deslocamento_pagina: 40, ideias: "Exemplo de como o autor constrói o argumento, parafraseado.", critica: "Exemplo de posição pessoal sobre o texto.", conexao: "Usar no capítulo 2.", referencia: "ESTUDIOSO, Exemplo; COLEGA, Exemplo. Artigo de exemplo para a dissertação. **Periódico de Exemplo**, [S. l.], v. 3, n. 1, p. 1-22, 2022.", referencia_conferida: true });
     const l5 = L({ titulo: "Segundo texto de exemplo", autores: "AUTOR, Outro Exemplo", ano: 2018, tipo_obra: "Artigo", disciplina_id: d2, paginas_total: 18 });
     const citacoes = [
-      { id: uuid(), leitura_id: l4.id, pagina: "7", trecho: "Trecho de exemplo: aqui entra a citação direta, copiada exatamente do original.", comentario: "Exemplo de comentário.", created_at: new Date().toISOString() },
-      { id: uuid(), leitura_id: l1.id, pagina: "15-16", trecho: "Outro trecho de exemplo, que atravessa duas páginas.", comentario: null, created_at: new Date().toISOString() },
+      { id: uuid(), leitura_id: l4.id, pagina_pdf: 7, pagina: null, origem: "grifo", conferida: false, trecho: "Trecho de exemplo importado de um grifo do PDF, copiado exatamente do original.", comentario: "Exemplo de comentário.", created_at: new Date().toISOString() },
+      { id: uuid(), leitura_id: l4.id, pagina_pdf: 12, pagina: null, origem: "grifo", conferida: true, trecho: "Exemplo de citação longa importada de um grifo. Quando o trecho passa de três linhas, a ABNT pede recuo de 4 cm, fonte menor, espaço simples e nenhuma aspa, e é assim que o hub copia este trecho para colar no texto da dissertação, da tese ou do artigo, já com a chamada de autor, ano e página no fim.", comentario: null, created_at: new Date().toISOString() },
+      { id: uuid(), leitura_id: l1.id, pagina: "15-16", origem: "manual", conferida: true, trecho: "Outro trecho de exemplo, que atravessa duas páginas.", comentario: null, created_at: new Date().toISOString() },
+    ];
+    const ideias = [
+      { id: uuid(), leitura_id: l4.id, texto: "Exemplo de ideia própria: o argumento do texto ajuda a sustentar a hipótese do capítulo 2.", citacoes: [citacoes[0].id], tags: "exemplo", created_at: new Date().toISOString() },
+      { id: uuid(), leitura_id: null, texto: "Exemplo de ideia livre, que cruza mais de um texto.", citacoes: [], tags: null, created_at: new Date().toISOString() },
     ];
     const T = (titulo, dest, tipo, dd, pr, feita) => ({ id: uuid(), titulo, disciplina_id: dest === "diss" ? null : dest, para_dissertacao: dest === "diss", tipo, prazo: dd == null ? null : D(dd), prioridade: pr, concluida: !!feita, concluida_em: feita ? D(-1) : null, created_at: new Date().toISOString() });
     const tarefas = [
@@ -1398,7 +1717,7 @@
     return {
       profile: { full_name: "Pessoa de Exemplo", nivel: "mestrado", programa: "Programa de exemplo", creditos_necessarios: 24, meta_horas_semana: 15 },
       dissertacao: { titulo: "Tema de exemplo da dissertação", orientador: "Prof. Dr. Exemplo", linha: "Linha de pesquisa de exemplo", problema: "Pergunta de pesquisa de exemplo.", hipotese: "Hipótese de exemplo.", objetivo_geral: "Objetivo geral de exemplo.", objetivos_especificos: "1. Objetivo específico de exemplo\n2. Objetivo específico de exemplo", metodologia: "Metodologia de exemplo." },
-      disciplinas, leituras: [l1, l2, l3, l4, l5], citacoes, tarefas, materiais: [], capitulos, marcos, reunioes, blocos, sessoes,
+      disciplinas, leituras: [l1, l2, l3, l4, l5], citacoes, ideias, tarefas, materiais: [], capitulos, marcos, reunioes, blocos, sessoes,
     };
   }
 
